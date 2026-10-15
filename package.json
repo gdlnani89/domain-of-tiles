@@ -27,7 +27,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.gdlmani89.domainoftiles",
+    "appId": "com.gdlnani89.domainoftiles",
     "productName": "Domain of Tiles",
     "directories": {
       "output": "release"
@@ -35,7 +35,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "gdlmani89",
+        "owner": "gdlnani89",
         "repo": "domain-of-tiles"
       }
     ],
