@@ -1,0 +1,1300 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Protótipo RTS isométrico em Three.js: Town Center, coleta de madeira, pathfinding A* e seleção de unidades." />
+    <title>Domain of Tiles - Isometric RTS Engine</title>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D WebGL Canvas Container -->
+      <div id="canvas-container"></div>
+
+      <!-- RTS Drag-Box Green Selection Rect -->
+      <div id="selection-box"></div>
+
+      <!-- Edge Pan Visual Indicator Overlays -->
+      <div id="edge-top" class="edge-indicator top"></div>
+      <div id="edge-bottom" class="edge-indicator bottom"></div>
+      <div id="edge-left" class="edge-indicator left"></div>
+      <div id="edge-right" class="edge-indicator right"></div>
+
+      <!-- Header & Motor / Configurações (Botão Flutuante + Balão Popover) -->
+      <div class="ui-overlay settings-dock" id="settings-dock">
+        <div class="settings-triggers-row">
+          <button
+            type="button"
+            id="btn-toggle-engine-settings"
+            class="btn-floating-trigger"
+            title="Configurações do Motor e Tamanho do Mapa"
+            aria-expanded="false"
+          >
+            <span class="trigger-icon">⚙️</span>
+            <span class="trigger-label">Configurações / Motor</span>
+            <span class="trigger-badge" id="trigger-map-size-badge">50×50</span>
+            <span class="trigger-chevron" id="engine-popover-chevron">▾</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-toggle-audio-mute"
+            class="btn-floating-trigger btn-mute-trigger"
+            title="Alternar Áudio Procedural (Som / Mudo)"
+            aria-label="Alternar Som"
+          >
+            <span id="audio-mute-icon" class="trigger-icon">🔊</span>
+            <span id="audio-mute-label" class="trigger-label">Som</span>
+          </button>
+
+          <div id="app-version-badge" class="app-version-badge" title="Domain of Tiles - Versão do Jogo">v1.0.0</div>
+        </div>
+
+        <!-- Balão Suspenso (Popover) do Motor & Mapa -->
+        <div id="engine-settings-popover" class="popover-balloon engine-popover" style="display: none;">
+          <div class="popover-header">
+            <div class="popover-title-row">
+              <div class="badge-logo-sm">RTS</div>
+              <div class="popover-title-text">
+                <h2>Isometric RTS Engine <span class="tag-version">Three.js</span></h2>
+                <p>Town Center • Forrageamento & Madeira • Pathfinding A*</p>
+              </div>
+            </div>
+            <button type="button" id="btn-close-engine-popover" class="btn-close-popover" title="Fechar (Esc)">✕</button>
+          </div>
+
+          <div class="specs-row">
+            <div class="spec-chip">
+              <span class="dot"></span>
+              <span>Aldeões: FSM Madeira & Alimento</span>
+            </div>
+            <div class="spec-chip">
+              <span class="dot"></span>
+              <span>Árvores (100🪵) • Frutas (150🍖)</span>
+            </div>
+          </div>
+
+          <!-- Seletor Dinâmico de Tamanho de Mapa & Reinício -->
+          <div class="map-size-widget" id="map-size-widget">
+            <div class="map-size-header">
+              <span class="map-size-label">🗺️ Tamanho do Mapa:</span>
+              <span class="map-size-current-badge" id="map-size-current">50×50</span>
+            </div>
+            <div class="map-size-options" role="radiogroup" aria-label="Seletor de tamanho do mapa">
+              <button
+                type="button"
+                class="map-size-option"
+                data-size="30"
+                title="Pequeno: 30×30 (ideal para escaramuças rápidas)"
+              >
+                <span class="opt-name">Pequeno</span>
+                <span class="opt-dim">30×30</span>
+              </button>
+              <button
+                type="button"
+                class="map-size-option selected current"
+                data-size="50"
+                title="Médio: 50×50 (Padrão equilibrado)"
+              >
+                <span class="opt-name">Médio</span>
+                <span class="opt-dim">50×50</span>
+              </button>
+              <button
+                type="button"
+                class="map-size-option"
+                data-size="80"
+                title="Grande: 80×80 (estilo mapa aberto de AoE)"
+              >
+                <span class="opt-name">Grande</span>
+                <span class="opt-dim">80×80</span>
+              </button>
+              <button
+                type="button"
+                class="map-size-option"
+                data-size="100"
+                title="Gigante: 100×100 (vasto mapa para grandes impérios e expansão)"
+              >
+                <span class="opt-name">Gigante</span>
+                <span class="opt-dim">100×100</span>
+              </button>
+            </div>
+            <!-- Atalhos Rápidos de Visibilidade & Modo -->
+            <div class="popover-quick-toggles" id="popover-quick-toggles">
+              <label class="quick-toggle-item" title="Iniciar ou reiniciar com o mapa 100% explorado e visível (sem névoa)">
+                <input type="checkbox" id="popover-chk-reveal-map" class="quick-toggle-checkbox">
+                <span class="quick-toggle-label">👁️ Mapa Todo Visível</span>
+              </label>
+              <label class="quick-toggle-item" title="Jogar sem base ou tropas inimigas (apenas construção e economia)">
+                <input type="checkbox" id="popover-chk-peaceful" class="quick-toggle-checkbox">
+                <span class="quick-toggle-label">🕊️ Construtor Pacífico</span>
+              </label>
+            </div>
+
+            <button
+              type="button"
+              id="btn-restart-map-size"
+              class="btn-restart-map"
+              title="Reiniciar Partida com Novo Tamanho"
+            >
+              <span class="btn-icon">↺</span>
+              <span>Reiniciar Partida com Novo Tamanho</span>
+            </button>
+
+            <!-- Geração Procedural de Mapas com Semente (Seed) -->
+            <div class="seed-control-section" id="seed-control-section">
+              <div class="seed-status-row">
+                <span class="seed-label">🌱 Semente (Seed):</span>
+                <span id="current-seed-display" class="seed-badge">#424242</span>
+              </div>
+              <button
+                type="button"
+                id="btn-random-seed"
+                class="btn-random-seed"
+                title="Gerar Novo Mapa Procedural com Relevo e Recursos Orgânicos"
+              >
+                <span class="btn-icon">🎲</span>
+                <span>Novo Mapa Aleatório (Nova Seed)</span>
+              </button>
+            </div>
+
+            <!-- Botão para abrir o Modal de Configuração Pré-Jogo / Sandbox -->
+            <div class="sandbox-shortcut-section" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+              <button
+                type="button"
+                id="btn-open-match-config"
+                class="btn-open-sandbox"
+                title="Abrir Modal de Personalização e Balanceamento da Partida"
+              >
+                <span class="btn-icon">⚙️</span>
+                <span>Partida Customizada & Balanceamento (Sandbox)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Age of Empires style Resource Bar -->
+      <div class="ui-overlay resource-bar" id="resource-bar">
+        <div class="resource-item" id="res-wood" title="Madeira">
+          <span class="res-icon">🪵</span>
+          <div class="res-text">
+            <span class="res-label">Madeira</span>
+            <span class="res-value" id="res-wood-value">0</span>
+          </div>
+        </div>
+        <div class="resource-item" id="res-food" title="Alimento">
+          <span class="res-icon">🍖</span>
+          <div class="res-text">
+            <span class="res-label">Alimento</span>
+            <span class="res-value" id="res-food-value">0</span>
+          </div>
+        </div>
+        <div class="resource-item" id="res-gold" title="Ouro">
+          <span class="res-icon">🪙</span>
+          <div class="res-text">
+            <span class="res-label">Ouro</span>
+            <span class="res-value" id="res-gold-value">0</span>
+          </div>
+        </div>
+        <div class="resource-item" id="res-stone" title="Pedra">
+          <span class="res-icon">🪨</span>
+          <div class="res-text">
+            <span class="res-label">Pedra</span>
+            <span class="res-value" id="res-stone-value">0</span>
+          </div>
+        </div>
+        <div class="resource-item" id="res-pop" title="População">
+          <span class="res-icon">👥</span>
+          <div class="res-text">
+            <span class="res-label">População</span>
+            <span class="res-value" id="res-pop-value">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Right Telemetry Panel -->
+      <div id="telemetry-panel" class="ui-overlay telemetry-panel is-collapsed">
+        <div id="telemetry-header" class="telemetry-header" title="Alternar visualização da Telemetria RTS">
+          <div class="telemetry-title">
+            <span class="telemetry-icon">📊</span>
+            <span>Telemetria RTS</span>
+          </div>
+          <span id="telemetry-toggle-icon" class="telemetry-toggle-icon">▾</span>
+        </div>
+        <div id="telemetry-body" class="telemetry-body">
+          <div class="telemetry-row">
+            <span class="telemetry-label">Alvo (X, Z):</span>
+            <span id="telemetry-cam-pos" class="telemetry-val">0.0, 0.0</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Frustum Zoom:</span>
+            <span id="telemetry-frustum" class="telemetry-val">28.0</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Célula Cursor:</span>
+            <span id="telemetry-tile" class="telemetry-val">[0, 0]</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Terreno:</span>
+            <span id="telemetry-walkable" class="telemetry-val" style="color: #38bdf8;">Caminhável</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Selecionadas:</span>
+            <span id="telemetry-selected-count" class="telemetry-val" style="color: #4ade80;">0</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Lenhadores:</span>
+            <span id="telemetry-woodcutters" class="telemetry-val" style="color: #fbbf24;">0</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Árvores:</span>
+            <span id="telemetry-trees" class="telemetry-val">0</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Objetivo:</span>
+            <span id="telemetry-objective" class="telemetry-val" style="color: #f59e0b;">⚔️ Destruir Centro da Cidade Inimigo</span>
+          </div>
+          <div class="telemetry-actions">
+            <button id="btn-spawn-unit" class="btn-telemetry" title="Criar novo aldeão no cursor (ou Tecla U - grátis debug)">
+              <span>+</span> Criar (U)
+            </button>
+            <button id="btn-reset-cam" class="btn-telemetry" title="Centralizar câmera no Town Center">
+              <span>↺</span> Câmera
+            </button>
+            <button id="btn-clear-units" class="btn-telemetry" title="Remover unidades">
+              <span>✕</span> Limpar
+            </button>
+            <button id="btn-test-farm-mill" class="btn-telemetry" title="Construir Moinho & Fazenda de Teste com Agricultor Ativo">
+              <span>🌾</span> Moinho & Fazenda
+            </button>
+            <button id="btn-test-walls-gates" class="btn-telemetry" title="Testar Fortificações (Graduar Arquiteto, Ergue Muralhas e Portão Funcional)">
+              <span>🧱</span> Teste Fortes
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Placement Mode Banner -->
+      <div id="placement-banner" class="placement-banner" style="display: none;">
+        <span id="placement-banner-text">🏗️ Modo de Construção — [LMB] Posicionar • [RMB/Esc] Cancelar</span>
+      </div>
+
+      <!-- Wall Drag-to-Build Tooltip -->
+      <div id="wall-drag-tooltip" class="wall-drag-tooltip" style="display: none;"></div>
+
+      <!-- Bottom Left Action Dock (Build Buttons + Controls Trigger & Popover) -->
+      <div class="ui-overlay bottom-action-dock" id="bottom-action-dock">
+        <!-- Build Buttons -->
+        <div class="build-card" id="build-card">
+          <button id="btn-build-barracks" class="btn-build disabled" title="Construir Quartel (Atalho B) — Requer 50 Madeira">
+            <span class="build-icon">⚔️</span>
+            <div class="build-info">
+              <span class="build-name">Quartel</span>
+              <span class="build-cost"><span class="cost-wood">50 🪵</span> • [B]</span>
+            </div>
+          </button>
+          <button id="btn-build-archery" class="btn-build disabled" title="Construir Campo de Tiro com Arco (Atalho A) — Requer 100 Madeira + 50 Pedra">
+            <span class="build-icon">🏹</span>
+            <div class="build-info">
+              <span class="build-name">Tiro c/ Arco</span>
+              <span class="build-cost"><span class="cost-wood">100 🪵</span> + <span class="cost-stone">50 🪨</span> • [A]</span>
+            </div>
+          </button>
+          <button id="btn-build-tower" class="btn-build disabled" title="Construir Torre de Vigia (Atalho W) — Requer 70 Pedra + 30 Madeira">
+            <span class="build-icon">🗼</span>
+            <div class="build-info">
+              <span class="build-name">Torre de Vigia</span>
+              <span class="build-cost"><span class="cost-stone">70 🪨</span> + <span class="cost-wood">30 🪵</span> • [W]</span>
+            </div>
+          </button>
+          <button id="btn-build-lumber" class="btn-build disabled" title="Construir Madeireira (Atalho L) — Requer 100 Madeira">
+            <span class="build-icon">🪵</span>
+            <div class="build-info">
+              <span class="build-name">Madeireira</span>
+              <span class="build-cost"><span class="cost-wood">100 🪵</span> • [L]</span>
+            </div>
+          </button>
+          <button id="btn-build-mining" class="btn-build disabled" title="Construir Campo de Mineração (Atalho M) — Requer 100 Madeira">
+            <span class="build-icon">⛏️</span>
+            <div class="build-info">
+              <span class="build-name">Mina</span>
+              <span class="build-cost"><span class="cost-wood">100 🪵</span> • [M]</span>
+            </div>
+          </button>
+          <button id="btn-build-house" class="btn-build disabled" title="Construir Casa (Atalho H) — Requer 30 Madeira (+5 População)">
+            <span class="build-icon">🏠</span>
+            <div class="build-info">
+              <span class="build-name">Casa</span>
+              <span class="build-cost"><span class="cost-wood">30 🪵</span> • [H]</span>
+            </div>
+          </button>
+          <button id="btn-build-mill" class="btn-build disabled" title="Construir Moinho (Atalho I) — Requer 70 Madeira (Depósito de Alimento)">
+            <span class="build-icon">🌾</span>
+            <div class="build-info">
+              <span class="build-name">Moinho</span>
+              <span class="build-cost"><span class="cost-wood">70 🪵</span> • [I]</span>
+            </div>
+          </button>
+          <button id="btn-build-farm" class="btn-build disabled" title="Construir Fazenda (Atalho F) — Requer 60 Madeira (175 Alimento)">
+            <span class="build-icon">🚜</span>
+            <div class="build-info">
+              <span class="build-name">Fazenda</span>
+              <span class="build-cost"><span class="cost-wood">60 🪵</span> • [F]</span>
+            </div>
+          </button>
+          <button id="btn-build-school" class="btn-build disabled" title="Construir Escola (Atalho E) — Requer 80 Madeira + 40 Pedra (Especialização de Aldeões)">
+            <span class="build-icon">🏫</span>
+            <div class="build-info">
+              <span class="build-name">Escola</span>
+              <span class="build-cost"><span class="cost-wood">80 🪵</span> + <span class="cost-stone">40 🪨</span> • [E]</span>
+            </div>
+          </button>
+          <button id="btn-build-college" class="btn-build disabled" title="Construir Faculdade (Atalho C) — Requer 150 Madeira + 120 Pedra + 80 Ouro (Especializações de Elite)">
+            <span class="build-icon">🏛️</span>
+            <div class="build-info">
+              <span class="build-name">Faculdade</span>
+              <span class="build-cost"><span class="cost-wood">150 🪵</span> + <span class="cost-stone">120 🪨</span> + <span class="cost-gold">80 🪙</span> • [C]</span>
+            </div>
+          </button>
+          <button id="btn-build-wall" class="btn-build btn-locked disabled" title="Requer um Arquiteto vivo formado na Faculdade!">
+            <span class="build-icon">🧱</span>
+            <div class="build-info">
+              <span class="build-name">Muralha <span class="lock-icon">🔒</span></span>
+              <span class="build-cost"><span class="cost-stone">5 🪨</span> • [P]</span>
+            </div>
+          </button>
+          <button id="btn-build-gate" class="btn-build btn-locked disabled" title="Requer um Arquiteto vivo formado na Faculdade!">
+            <span class="build-icon">🚪</span>
+            <div class="build-info">
+              <span class="build-name">Portão <span class="lock-icon">🔒</span></span>
+              <span class="build-cost"><span class="cost-stone">20 🪨</span> + <span class="cost-wood">20 🪵</span></span>
+            </div>
+          </button>
+        </div>
+
+        <!-- Controls Trigger Button & Popover Balloon -->
+        <div class="controls-trigger-container" id="controls-trigger-container">
+          <button
+            type="button"
+            id="btn-toggle-controls"
+            class="btn-floating-controls"
+            title="Exibir Guia de Controles e Atalhos (Atalho K)"
+            aria-expanded="false"
+          >
+            <span class="controls-btn-icon">⌨️</span>
+            <span class="controls-btn-label">Atalhos</span>
+            <span class="controls-hotkey-badge">[K]</span>
+          </button>
+
+          <!-- Balão Flutuante (Popover) de Controles e Atalhos (Abre acima do botão) -->
+          <div id="shortcuts-popover" class="popover-balloon controls-popover shortcuts-popover" data-id="controls-popover" style="display: none;">
+            <div class="popover-header">
+              <div class="popover-title-row">
+                <span class="popover-badge-icon">⌨️</span>
+                <div class="popover-title-text">
+                  <span class="popover-heading">Controles & Atalhos RTS</span>
+                  <span class="popover-subheading">Guia rápido de comandos</span>
+                </div>
+              </div>
+              <button type="button" id="btn-close-controls-popover" class="btn-close-popover" title="Fechar (Esc)">✕</button>
+            </div>
+
+            <div class="controls-list" id="controls-list">
+              <div class="control-item">
+                <span class="control-key">[Espaço]</span>
+                <span>— Pausar / Retomar Simulação ⏸️</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla V</span>
+                <span>Treinar Aldeão (50 🍖 TC)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla T</span>
+                <span>Soldado (20 🍖 + 30 🪵)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla B</span>
+                <span>Construir Quartel (50 🪵)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla A</span>
+                <span>Tiro com Arco (100 🪵 + 50 🪨) 🏹</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla R</span>
+                <span>Arqueiro (40 🪵 + 45 🪙) 🎯</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla W</span>
+                <span>Torre de Vigia (70 🪨 + 30 🪵)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla L</span>
+                <span>Madeireira (100 🪵)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla M</span>
+                <span>Campo de Mineração (100 🪵)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla H</span>
+                <span>Construir Casa (30 🪵 • +5 Pop) 🏠</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla I</span>
+                <span>Construir Moinho (70 🪵 • Depósito) 🌾</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla F</span>
+                <span>Construir Fazenda (60 🪵 • 175 🍖) 🚜</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla E</span>
+                <span>Construir Escola (80 🪵 + 40 🪨) 🏫</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla C</span>
+                <span>Construir Faculdade (150 🪵 + 120 🪨 + 80 🪙) 🏛️</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla K</span>
+                <span>Guia de Atalhos & Controles ⌨️</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Frutas</span>
+                <span>Colher Alimento 🍓</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Árvore</span>
+                <span>Coletar Madeira 🪵</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Pedra</span>
+                <span>Minerar Jazida 🪨</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Inimigo</span>
+                <span>Atacar Unidade ⚔️</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Obra</span>
+                <span>Construir com Aldeão 🔨</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">RMB Chão</span>
+                <span>Mover Unidades 🎯</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">LMB Clique</span>
+                <span>Selecionar Aldeão, TC ou Quartel</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">LMB Arraste</span>
+                <span>Caixa de Seleção Múltipla 🟩</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla U</span>
+                <span>Criar Aldeão no Cursor (Debug)</span>
+              </div>
+              <div class="control-item">
+                <span class="control-key">Tecla Esc</span>
+                <span>Cancelar / Desselecionar ❌</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Town Center Production Panel (Active when Town Center is selected) -->
+      <div class="ui-overlay barracks-panel tc-panel" id="tc-hud-panel" style="display: none;">
+        <div class="barracks-panel-header">
+          <div class="barracks-title-wrap">
+            <span class="barracks-badge tc-badge">CENTRO DA CIDADE</span>
+            <span class="barracks-title">🏛️ Town Center</span>
+          </div>
+          <button id="btn-close-tc" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="barracks-action-row">
+          <button id="btn-train-villager" class="btn-train disabled" title="Treinar Aldeão (Custo: 50 Alimento) • Atalho V">
+            <span class="train-icon">👨‍🌾</span>
+            <div class="train-info">
+              <span class="train-name">Treinar Aldeão</span>
+              <span class="train-cost"><span class="cost-food">50 🍖 Alimento</span> • [V]</span>
+            </div>
+          </button>
+        </div>
+        <div class="production-queue-box">
+          <div class="queue-status-bar">
+            <span class="queue-label">Fila de Produção:</span>
+            <span id="tc-queue-status-text" class="queue-status-val">Vazia (0/5)</span>
+          </div>
+          <div class="queue-slots" id="tc-queue-slots">
+            <div class="queue-slot empty" id="tc-q-slot-0"></div>
+            <div class="queue-slot empty" id="tc-q-slot-1"></div>
+            <div class="queue-slot empty" id="tc-q-slot-2"></div>
+            <div class="queue-slot empty" id="tc-q-slot-3"></div>
+            <div class="queue-slot empty" id="tc-q-slot-4"></div>
+          </div>
+          <div class="queue-progress-track" id="tc-queue-progress-track" style="display: none;">
+            <div class="queue-progress-fill" id="tc-queue-progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="queue-timer-label" id="tc-queue-timer-label" style="display: none;">0.0s / 4.0s</div>
+        </div>
+      </div>
+
+      <!-- Barracks Production Panel (Active when Barracks is selected) -->
+      <div class="ui-overlay barracks-panel" id="barracks-hud-panel" style="display: none;">
+        <div class="barracks-panel-header">
+          <div class="barracks-title-wrap">
+            <span class="barracks-badge">EDIFÍCIO MILITAR</span>
+            <span class="barracks-title">⚔️ Quartel (Barracks)</span>
+          </div>
+          <button id="btn-close-barracks" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="barracks-action-row">
+          <button id="btn-train-swordsman" class="btn-train disabled" title="Treinar Espadachim (Custo: 25 Madeira + 10 Ouro) • Atalho T">
+            <span class="train-icon">🗡️</span>
+            <div class="train-info">
+              <span class="train-name">Treinar Espadachim</span>
+              <span class="train-cost"><span class="cost-wood">25 🪵</span> + <span class="cost-gold">10 🪙</span> • [T]</span>
+            </div>
+          </button>
+        </div>
+        <div class="production-queue-box">
+          <div class="queue-status-bar">
+            <span class="queue-label">Fila de Produção:</span>
+            <span id="queue-status-text" class="queue-status-val">Vazia (0/5)</span>
+          </div>
+          <div class="queue-slots" id="queue-slots">
+            <div class="queue-slot empty" id="q-slot-0"></div>
+            <div class="queue-slot empty" id="q-slot-1"></div>
+            <div class="queue-slot empty" id="q-slot-2"></div>
+            <div class="queue-slot empty" id="q-slot-3"></div>
+            <div class="queue-slot empty" id="q-slot-4"></div>
+          </div>
+          <div class="queue-progress-track" id="queue-progress-track" style="display: none;">
+            <div class="queue-progress-fill" id="queue-progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="queue-timer-label" id="queue-timer-label" style="display: none;">0.0s / 5.0s</div>
+        </div>
+      </div>
+
+      <!-- Archery Range Panel (Active when Archery Range is selected) -->
+      <div class="ui-overlay barracks-panel archery-panel" id="archery-panel" style="display: none;">
+        <div class="barracks-panel-header">
+          <div class="barracks-title-wrap">
+            <span class="barracks-badge archery-badge">EDIFÍCIO MILITAR</span>
+            <span class="barracks-title">🏹 Campo de Tiro com Arco</span>
+          </div>
+          <button id="btn-close-archery" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="barracks-action-row">
+          <button id="btn-train-archer" class="btn-train disabled" title="🏹 Treinar Arqueiro (40 Madeira, 45 Ouro — 14s) • Atalho R">
+            <span class="train-icon">🏹</span>
+            <div class="train-info">
+              <span class="train-name">Treinar Arqueiro</span>
+              <span class="train-cost"><span class="cost-wood">40 🪵</span> + <span class="cost-gold">45 🪙</span> • [R] (14s)</span>
+            </div>
+          </button>
+        </div>
+        <div class="production-queue-box">
+          <div class="queue-status-bar">
+            <span class="queue-label">Fila de Produção:</span>
+            <span id="archery-queue-status-text" class="queue-status-val">Vazia (0/5)</span>
+          </div>
+          <div class="queue-slots" id="archery-queue-slots">
+            <div class="queue-slot empty" id="archery-q-slot-0"></div>
+            <div class="queue-slot empty" id="archery-q-slot-1"></div>
+            <div class="queue-slot empty" id="archery-q-slot-2"></div>
+            <div class="queue-slot empty" id="archery-q-slot-3"></div>
+            <div class="queue-slot empty" id="archery-q-slot-4"></div>
+          </div>
+          <div class="queue-progress-track" id="archery-queue-progress-track" style="display: none;">
+            <div class="queue-progress-fill" id="archery-queue-progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="queue-timer-label" id="archery-queue-timer-label" style="display: none;">0.0s / 14.0s</div>
+        </div>
+      </div>
+
+      <!-- Farm Panel (Active when Farm is selected) -->
+      <div class="ui-overlay farm-panel" id="farm-hud-panel" style="display: none;">
+        <div class="farm-panel-header">
+          <div class="farm-title-wrap">
+            <span class="farm-badge">ESTRUTURA AGRÍCOLA</span>
+            <span class="farm-title">🌾 Fazenda (Farm)</span>
+          </div>
+          <button id="btn-close-farm" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="farm-status-box">
+          <div class="farm-status-row">
+            <span class="status-label">Alimento Restante:</span>
+            <span id="farm-food-val" class="farm-food-val">175 / 175 🍖</span>
+          </div>
+          <div class="farm-progress-track">
+            <div id="farm-food-bar" class="farm-food-bar" style="width: 100%;"></div>
+          </div>
+          <div class="farm-status-row" style="margin-top: 4px;">
+            <span class="status-label">Agricultor:</span>
+            <span id="farm-farmer-val" class="farm-farmer-val">Nenhum</span>
+          </div>
+        </div>
+        <div class="farm-action-row">
+          <button id="btn-reseed-farm" class="btn-reseed disabled" title="Renovar Fazenda (Custo: 60 Madeira) • Restaura 175 Alimento">
+            <span class="reseed-icon">🔄</span>
+            <div class="reseed-info">
+              <span class="reseed-name">Renovar Fazenda</span>
+              <span class="reseed-cost"><span class="cost-wood">60 🪵</span> • (+175 🍖)</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Mill Panel (Active when Mill is selected) -->
+      <div class="ui-overlay mill-panel" id="mill-hud-panel" style="display: none;">
+        <div class="mill-panel-header">
+          <div class="mill-title-wrap">
+            <span class="mill-badge">PONTO DE DEPÓSITO</span>
+            <span class="mill-title">🌾 Moinho (Mill)</span>
+          </div>
+          <button id="btn-close-mill" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="mill-desc-box">
+          <p class="mill-desc-text">Depósito exclusivo para <strong>Alimento</strong> colhido de arbustos e fazendas adjacentes.</p>
+          <div class="mill-tip-box">
+            <span class="tip-icon">💡</span>
+            <span class="tip-text">Posicione moinhos próximos às fazendas para otimizar os trajetos de entrega!</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- School Education Panel (Active when School is selected) -->
+      <div class="ui-overlay school-panel" id="school-panel" style="display: none;">
+        <div class="school-panel-header">
+          <div class="school-title-wrap">
+            <span class="school-badge">EDIFÍCIO DE EDUCAÇÃO</span>
+            <span class="school-title">🏫 Escola da Vila</span>
+          </div>
+          <button id="btn-close-school" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+
+        <div class="school-capacity-row">
+          <span class="school-capacity-label">Vagas de Especialização:</span>
+          <span id="school-capacity-val" class="school-capacity-val">Alunos: 0 / 3</span>
+        </div>
+
+        <div class="school-students-container">
+          <div class="school-students-header">
+            <span class="students-list-title">Alunos Matriculados:</span>
+            <span class="students-duration-info">⏱️ 120s de estudo</span>
+          </div>
+          <div class="school-students-list" id="school-students-list">
+            <div class="student-empty-state" id="school-empty-state">
+              <span class="empty-icon">📖</span>
+              <p>Nenhum aluno matriculado.<br>Selecione aldeões comuns e clique com botão direito na Escola para estudar!</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="school-perks-info">
+          <div class="school-perk-item">
+            <span class="perk-icon">📦</span>
+            <span class="perk-text"><strong>Carga 20:</strong> Dobro de capacidade</span>
+          </div>
+          <div class="school-perk-item">
+            <span class="perk-icon">🔨</span>
+            <span class="perk-text"><strong>+40% Obras:</strong> Mestre Construtor</span>
+          </div>
+          <div class="school-perk-item">
+            <span class="perk-icon">⛏️</span>
+            <span class="perk-text"><strong>+25% Coleta:</strong> Produtividade Técnica</span>
+          </div>
+        </div>
+
+        <div class="school-action-row">
+          <button id="btn-eject-students" class="btn-eject-students disabled" title="Liberar todos os alunos matriculados">
+            <span class="eject-icon">🚪</span>
+            <span>Liberar Alunos (Ejetar)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- College & University Panel (Active when College is selected) -->
+      <div class="ui-overlay college-panel" id="college-hud-panel" style="display: none;">
+        <div class="college-panel-header">
+          <div class="college-title-wrap">
+            <span class="college-badge">ENSINO SUPERIOR & ELITE</span>
+            <span class="college-title">🏛️ Real Faculdade de Ciências & Artes</span>
+          </div>
+          <button id="btn-close-college" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+
+        <div class="college-capacity-row">
+          <span class="college-capacity-label">Vagas de Pós-Graduação:</span>
+          <span id="college-capacity-val" class="college-capacity-val">Especializandos: 0 / 3</span>
+        </div>
+
+        <!-- Seletor de Especialização / Curso -->
+        <div class="college-course-selector-box">
+          <span class="selector-title">Curso para Novos Ingressantes:</span>
+          <div class="course-buttons-row">
+            <button type="button" class="btn-course-choice active" id="btn-course-architect" data-course="ARCHITECT" title="Arquiteto: +30% HP às obras e muralhas reforçadas">
+              <span class="course-icon">🏛️</span>
+              <span class="course-name">Arquiteto</span>
+            </button>
+            <button type="button" class="btn-course-choice" id="btn-course-agronomist" data-course="AGRONOMIST" title="Agrônomo: Dobra rendimento de fazendas ao redor (x2)">
+              <span class="course-icon">🌾</span>
+              <span class="course-name">Agrônomo</span>
+            </button>
+            <button type="button" class="btn-course-choice" id="btn-course-alchemist" data-course="ALCHEMIST" title="Alquimista: Ouro passivo (+1🪙/3s) e armas incendiárias">
+              <span class="course-icon">⚗️</span>
+              <span class="course-name">Alquimista</span>
+            </button>
+          </div>
+          <div class="course-description-banner" id="course-description-banner">
+            <span id="course-desc-icon">🏛️</span>
+            <span id="course-desc-text"><strong>Arquiteto Mestre:</strong> Obras recebem +30% de HP e velocidade recorde de construção.</span>
+          </div>
+        </div>
+
+        <!-- Lista de Estudantes de Elite Matriculados -->
+        <div class="college-students-container">
+          <div class="college-students-header">
+            <span class="students-list-title">Alunos em Especialização:</span>
+            <span id="college-duration-info" class="students-duration-info">⏱️ 240s de estudo</span>
+          </div>
+          <div class="college-students-list" id="college-students-list">
+            <div class="student-empty-state" id="college-empty-state">
+              <span class="empty-icon">📜</span>
+              <p>Nenhum aluno em especialização.<br>Envie <strong>Cidadãos Instruídos (Nível 1)</strong> com botão direito!</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="college-action-row">
+          <button type="button" id="btn-enroll-college-auto" class="btn-enroll-college" title="Convocar e matricular Cidadão Instruído (Nível 1) disponível">
+            <span class="enroll-icon">📜</span>
+            <span>Matricular Aluno (Nível 1)</span>
+          </button>
+          <button type="button" id="btn-eject-college-students" class="btn-eject-students disabled" title="Liberar todos os mestrandos matriculados">
+            <span class="eject-icon">🚪</span>
+            <span>Liberar Alunos (Ejetar)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Selected Unit HUD Card (Active when a unit is selected) -->
+      <div class="ui-overlay unit-card-panel" id="unit-card-panel" style="display: none;">
+        <div class="unit-card-header">
+          <div class="unit-card-avatar" id="unit-card-avatar">👨‍🌾</div>
+          <div class="unit-card-titles">
+            <div class="unit-card-name-row">
+              <span class="unit-card-name" id="unit-card-name">Aldeão</span>
+              <span class="badge-education" id="unit-card-education-badge" style="display: none;">🎓 Graduado</span>
+            </div>
+            <span class="unit-card-role" id="unit-card-role">Cidadão</span>
+          </div>
+        </div>
+        <div class="unit-card-stats">
+          <div class="unit-hp-bar-track">
+            <div class="unit-hp-bar-fill" id="unit-card-hp-fill" style="width: 100%;"></div>
+          </div>
+          <div class="unit-card-stats-text">
+            <span id="unit-card-hp-text">30 / 30 HP</span>
+            <span id="unit-card-carry-text">Carga: 0 / 10</span>
+          </div>
+        </div>
+        <div class="unit-card-perks" id="unit-card-perks" style="display: none;">
+          <span class="perk-tag" title="Capacidade de carga expandida de 10 para 20">📦 Carga: 20</span>
+          <span class="perk-tag" title="Velocidade de construção aumentada em +40%">🔨 Obras: +40%</span>
+          <span class="perk-tag" title="Velocidade de coleta de todos os recursos aumentada em +25%">⛏️ Coleta: +25%</span>
+        </div>
+      </div>
+
+      <!-- Pause Indicator Floating Banner Overlay -->
+      <div id="pause-indicator" class="pause-indicator hidden" style="display: none;">
+        <span class="pause-indicator-icon">⏸️</span>
+        <span class="pause-indicator-text">JOGO PAUSADO (Pressione Espaço para Continuar)</span>
+      </div>
+
+      <!-- Invasion Alert Banner -->
+      <div id="invasion-banner" class="invasion-banner" style="display: none;">
+        <span class="invasion-icon">⚔️</span>
+        <div class="invasion-text" id="invasion-banner-text">
+          <strong>⚔️ O inimigo está marchando contra sua base!</strong>
+        </div>
+      </div>
+
+      <!-- Interactive Minimap Card (Bottom Right) -->
+      <div class="ui-overlay minimap-card" id="minimap-container">
+        <div class="minimap-header">
+          <div class="minimap-header-title">
+            <span class="minimap-icon">🧭</span>
+            <span class="minimap-title">Minimapa</span>
+            <span class="minimap-size-tag" id="minimap-size">50×50</span>
+          </div>
+          <span class="minimap-coords" id="minimap-coords">[0, 0]</span>
+        </div>
+        <div class="minimap-frame">
+          <canvas id="minimap-canvas" width="160" height="160"></canvas>
+        </div>
+      </div>
+
+      <!-- Game Over / Victory Modal -->
+      <div id="game-over-modal" class="game-over-modal" style="display: none;">
+        <div class="game-over-backdrop"></div>
+        <div class="game-over-card" id="game-over-card">
+          <div class="game-over-banner" id="game-over-banner">
+            <span class="game-over-icon" id="game-over-icon">🏆</span>
+            <h2 class="game-over-title" id="game-over-title">VITÓRIA CONQUISTADA</h2>
+            <p class="game-over-subtitle" id="game-over-subtitle">Você destruiu o acampamento inimigo e eliminou todas as tropas invasoras!</p>
+          </div>
+
+          <div class="game-over-stats-grid">
+            <div class="game-stat-item">
+              <span class="game-stat-icon">⏱️</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Tempo de Partida</span>
+                <span class="game-stat-value" id="stat-time">00:00</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">🪵</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Madeira Coletada</span>
+                <span class="game-stat-value" id="stat-wood">0</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">🍖</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Alimento Coletado</span>
+                <span class="game-stat-value" id="stat-food">0</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">🪨</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Pedra Minerada</span>
+                <span class="game-stat-value" id="stat-stone">0</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">👥</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Unidades Treinadas</span>
+                <span class="game-stat-value" id="stat-units">0</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">⚔️</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Inimigos Abatidos</span>
+                <span class="game-stat-value" id="stat-kills">0</span>
+              </div>
+            </div>
+            <div class="game-stat-item">
+              <span class="game-stat-icon">🏛️</span>
+              <div class="game-stat-content">
+                <span class="game-stat-label">Edifícios Erguidos</span>
+                <span class="game-stat-value" id="stat-buildings">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="game-over-actions">
+            <button id="btn-restart-game" class="btn-game-over">
+              <span class="btn-icon">↺</span> Jogar Novamente
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal de Configuração Pré-Jogo (Partida Customizada / Sandbox) -->
+      <div id="match-config-modal" class="match-config-modal">
+        <div class="match-config-backdrop"></div>
+        <div class="match-config-card" id="match-config-card">
+          <!-- Cabeçalho do Modal -->
+          <div class="match-config-header">
+            <div class="match-config-title-row">
+              <span class="match-config-icon">⚔️</span>
+              <div class="match-config-title-wrap">
+                <div class="match-config-title-line">
+                  <h2 class="match-config-title">Configurar Partida RTS</h2>
+                  <span class="badge-sandbox">SANDBOX & BALANCEAMENTO</span>
+                </div>
+                <p class="match-config-desc">Personalize estruturas, economia, exército e terreno antes de iniciar a simulação.</p>
+              </div>
+            </div>
+            <button type="button" id="btn-close-match-config" class="btn-close-modal" title="Fechar e Retomar (Esc)" style="display: none;">✕</button>
+          </div>
+
+          <!-- Abas de Navegação -->
+          <div class="config-tabs-nav" role="tablist">
+            <button type="button" class="config-tab-btn active" data-tab="tab-structures">
+              <span class="tab-icon">🛡️</span>
+              <span class="tab-label">Estruturas & HP</span>
+            </button>
+            <button type="button" class="config-tab-btn" data-tab="tab-economy">
+              <span class="tab-icon">🪵</span>
+              <span class="tab-label">Economia & Recursos</span>
+            </button>
+            <button type="button" class="config-tab-btn" data-tab="tab-army">
+              <span class="tab-icon">⚔️</span>
+              <span class="tab-label">Exército & Treino</span>
+            </button>
+            <button type="button" class="config-tab-btn" data-tab="tab-world">
+              <span class="tab-icon">🗺️</span>
+              <span class="tab-label">Terreno & Inicial</span>
+            </button>
+          </div>
+
+          <!-- Conteúdo das Abas -->
+          <div class="config-tabs-content">
+            <!-- ABA 1: Estruturas & HP -->
+            <div id="tab-structures" class="config-tab-pane active">
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🏛️</span>
+                    <label for="cfg-tc-hp" class="config-name">Vida do Town Center (TC)</label>
+                    <span class="config-value-badge" id="val-tc-hp">400 HP</span>
+                  </div>
+                  <p class="config-hint">Pontos de vida do centro urbano aliado. Se for destruído, a partida é perdida.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-tc-hp" min="100" max="2000" step="25" value="400" class="config-slider">
+                  <div class="slider-ticks"><span>100</span><span>400 (Padrão)</span><span>2000</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">⛺</span>
+                    <label for="cfg-enemy-hp" class="config-name">Vida do Acampamento Inimigo</label>
+                    <span class="config-value-badge" id="val-enemy-hp">200 HP</span>
+                  </div>
+                  <p class="config-hint">Pontos de vida do acampamento militar adversário necessário para a vitória.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-enemy-hp" min="50" max="1000" step="25" value="200" class="config-slider">
+                  <div class="slider-ticks"><span>50</span><span>200 (Padrão)</span><span>1000</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ABA 2: Economia & Recursos -->
+            <div id="tab-economy" class="config-tab-pane">
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🪓</span>
+                    <label for="cfg-wood-time" class="config-name">Tempo de Coleta de Madeira</label>
+                    <span class="config-value-badge" id="val-wood-time">3.0s</span>
+                  </div>
+                  <p class="config-hint">Duração do ciclo de corte de toras pelos aldeões em cada árvore.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-wood-time" min="0.5" max="10.0" step="0.5" value="3.0" class="config-slider">
+                  <div class="slider-ticks"><span>0.5s</span><span>3.0s (Padrão)</span><span>10.0s</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">⛏️</span>
+                    <label for="cfg-stone-time" class="config-name">Tempo de Mineração de Pedra</label>
+                    <span class="config-value-badge" id="val-stone-time">3.5s</span>
+                  </div>
+                  <p class="config-hint">Duração do ciclo de extração de pedra com picareta nas jazidas.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-stone-time" min="0.5" max="10.0" step="0.5" value="3.5" class="config-slider">
+                  <div class="slider-ticks"><span>0.5s</span><span>3.5s (Padrão)</span><span>10.0s</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">⛏️</span>
+                    <label for="cfg-gold-time" class="config-name">Tempo de Garimpo de Ouro</label>
+                    <span class="config-value-badge" id="val-gold-time">3.5s</span>
+                  </div>
+                  <p class="config-hint">Duração do ciclo de extração de pepitas douradas nas minas de ouro.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-gold-time" min="0.5" max="10.0" step="0.5" value="3.5" class="config-slider">
+                  <div class="slider-ticks"><span>0.5s</span><span>3.5s (Padrão)</span><span>10.0s</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🌲</span>
+                    <label for="cfg-tree-cap" class="config-name">Capacidade por Árvore</label>
+                    <span class="config-value-badge" id="val-tree-cap">100 🪵</span>
+                  </div>
+                  <p class="config-hint">Volume total de madeira fornecido por cada árvore antes de tombar.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-tree-cap" min="20" max="500" step="10" value="100" class="config-slider">
+                  <div class="slider-ticks"><span>20</span><span>100 (Padrão)</span><span>500</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🪨</span>
+                    <label for="cfg-stone-cap" class="config-name">Capacidade por Jazida de Pedra</label>
+                    <span class="config-value-badge" id="val-stone-cap">250 🪨</span>
+                  </div>
+                  <p class="config-hint">Volume total de rochas que cada pedreira oferece aos mineradores.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-stone-cap" min="50" max="1000" step="25" value="250" class="config-slider">
+                  <div class="slider-ticks"><span>50</span><span>250 (Padrão)</span><span>1000</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🪙</span>
+                    <label for="cfg-gold-cap" class="config-name">Capacidade por Mina de Ouro</label>
+                    <span class="config-value-badge" id="val-gold-cap">300 🪙</span>
+                  </div>
+                  <p class="config-hint">Volume total de minério que cada veio aurífero oferece antes de se esgotar.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-gold-cap" min="50" max="1000" step="25" value="300" class="config-slider">
+                  <div class="slider-ticks"><span>50</span><span>300 (Padrão)</span><span>1000</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🏛️</span>
+                    <label for="cfg-college-time" class="config-name">Duração dos Estudos na Faculdade</label>
+                    <span class="config-value-badge" id="val-college-time">240s</span>
+                  </div>
+                  <p class="config-hint">Tempo para especializar um Cidadão Instruído (Nível 1) em Especialista de Elite (Sandbox).</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-college-time" min="10" max="300" step="10" value="240" class="config-slider">
+                  <div class="slider-ticks"><span>10s (Rápido)</span><span>240s (Padrão)</span><span>300s</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ABA 3: Exército & Treino -->
+            <div id="tab-army" class="config-tab-pane">
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">❤️</span>
+                    <label for="cfg-sword-hp" class="config-name">Vida do Espadachim</label>
+                    <span class="config-value-badge" id="val-sword-hp">60 HP</span>
+                  </div>
+                  <p class="config-hint">Pontos de vida das tropas combatentes de infantaria.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-sword-hp" min="20" max="200" step="5" value="60" class="config-slider">
+                  <div class="slider-ticks"><span>20</span><span>60 (Padrão)</span><span>200</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🗡️</span>
+                    <label for="cfg-sword-dmg" class="config-name">Dano do Espadachim</label>
+                    <span class="config-value-badge" id="val-sword-dmg">8 Dano</span>
+                  </div>
+                  <p class="config-hint">Poder de ataque corpo a corpo desferido a cada golpe de espada.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-sword-dmg" min="2" max="40" step="1" value="8" class="config-slider">
+                  <div class="slider-ticks"><span>2</span><span>8 (Padrão)</span><span>40</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">⏱️</span>
+                    <label for="cfg-train-time" class="config-name">Tempo de Treinamento Militar</label>
+                    <span class="config-value-badge" id="val-train-time">5.0s</span>
+                  </div>
+                  <p class="config-hint">Velocidade de formação de soldados na fila de produção do Quartel.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-train-time" min="1.0" max="15.0" step="0.5" value="5.0" class="config-slider">
+                  <div class="slider-ticks"><span>1.0s</span><span>5.0s (Padrão)</span><span>15.0s</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🌊</span>
+                    <label for="cfg-invasion-interval" class="config-name">Intervalo das Ondas de Invasão</label>
+                    <span class="config-value-badge" id="val-invasion-interval">3.0 min</span>
+                  </div>
+                  <p class="config-hint">Frequência em minutos na qual o acampamento inimigo treina de 2 a 4 soldados e envia em invasão militar.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-invasion-interval" min="1.0" max="10.0" step="0.5" value="3.0" class="config-slider">
+                  <div class="slider-ticks"><span>1.0 min</span><span>3.0 min (Padrão)</span><span>10.0 min</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ABA 4: Terreno & Inicial -->
+            <div id="tab-world" class="config-tab-pane">
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🪵</span>
+                    <label for="cfg-init-wood" class="config-name">Madeira Inicial</label>
+                    <span class="config-value-badge" id="val-init-wood">150 🪵</span>
+                  </div>
+                  <p class="config-hint">Estoque concedido no início da partida para construir Quartel, Moinho ou Fazendas.</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="cfg-init-wood" min="0" max="500" step="10" value="150" class="config-slider">
+                  <div class="slider-ticks"><span>0</span><span>150 (Padrão)</span><span>500</span></div>
+                </div>
+              </div>
+
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🗺️</span>
+                    <span class="config-name">Tamanho do Mapa</span>
+                    <span class="config-value-badge" id="val-map-size">50×50</span>
+                  </div>
+                  <p class="config-hint">Dimensão do tabuleiro com colinas procedurais e distribuição equilibrada de recursos.</p>
+                </div>
+                <div class="config-segmented-control" id="cfg-map-size-control">
+                  <button type="button" class="btn-segmented" data-size="30">
+                    <span class="seg-title">Pequeno</span>
+                    <span class="seg-sub">30×30</span>
+                  </button>
+                  <button type="button" class="btn-segmented active" data-size="50">
+                    <span class="seg-title">Médio</span>
+                    <span class="seg-sub">50×50</span>
+                  </button>
+                  <button type="button" class="btn-segmented" data-size="80">
+                    <span class="seg-title">Grande</span>
+                    <span class="seg-sub">80×80</span>
+                  </button>
+                  <button type="button" class="btn-segmented" data-size="100">
+                    <span class="seg-title">Gigante</span>
+                    <span class="seg-sub">100×100</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Modo de Jogo (Padrão vs Construtor Pacífico) -->
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🎮</span>
+                    <span class="config-name">Modo de Jogo</span>
+                    <span class="config-value-badge" id="val-game-mode">⚔️ Padrão</span>
+                  </div>
+                  <p class="config-hint">Escolha entre combate clássico contra acampamento invasor ou modo livre infinito focado na economia e construção.</p>
+                </div>
+                <div class="config-segmented-control game-mode-segmented" id="cfg-game-mode-control">
+                  <button type="button" class="btn-segmented active" data-peaceful="false">
+                    <span class="seg-title">⚔️ Padrão</span>
+                    <span class="seg-sub">Com Inimigo</span>
+                  </button>
+                  <button type="button" class="btn-segmented" data-peaceful="true">
+                    <span class="seg-title">🕊️ Construtor Pacífico</span>
+                    <span class="seg-sub">Sem Inimigo</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Visibilidade & Névoa de Guerra -->
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">👁️</span>
+                    <span class="config-name">Visibilidade do Mapa</span>
+                    <span class="config-value-badge" id="val-reveal-map">Névoa Ativa</span>
+                  </div>
+                  <p class="config-hint">Inicia com 100% do mapa explorado e visível, desativando a névoa de guerra e o shroud escuro.</p>
+                </div>
+                <div class="config-switch-row">
+                  <label class="config-switch" for="cfg-reveal-map" title="Alternar visão total do mapa">
+                    <input type="checkbox" id="cfg-reveal-map">
+                    <span class="config-switch-track">
+                      <span class="config-switch-thumb"></span>
+                    </span>
+                    <span class="config-switch-text" id="lbl-reveal-map">Revelar Mapa Completo (Desativar Névoa de Guerra)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rodapé de Ações -->
+          <div class="match-config-footer">
+            <button type="button" id="btn-reset-match-config" class="btn-config-secondary" title="Redefinir para valores equilibrados padrão">
+              <span class="btn-icon">↺</span> Restaurar Padrões
+            </button>
+            <button type="button" id="btn-start-match" class="btn-config-primary" title="Confirmar configurações e começar o jogo">
+              <span class="btn-icon">⚔️</span> <span id="btn-start-match-label">Iniciar Partida</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Banner Flutuante de Atualização Automática (Electron Auto-Update) -->
+      <div id="electron-update-banner" class="electron-update-banner" style="display: none;" role="alert">
+        <div class="update-banner-icon-col">
+          <div class="update-pulse-ring"></div>
+          <span class="update-banner-icon">🚀</span>
+        </div>
+        <div class="update-banner-content">
+          <div class="update-banner-header">
+            <h3 id="update-banner-title" class="update-banner-title">Nova Atualização Disponível!</h3>
+            <span id="update-banner-version-tag" class="update-banner-version-tag">vX.X.X</span>
+          </div>
+          <p id="update-banner-desc" class="update-banner-desc">Uma nova versão do Domain of Tiles está pronta para ser baixada.</p>
+          
+          <div id="update-progress-bar" class="update-progress-container" style="display: none;">
+            <div class="update-progress-info">
+              <span id="update-progress-label">Baixando atualização...</span>
+              <span id="update-progress-text">0%</span>
+            </div>
+            <div class="update-progress-track">
+              <div id="update-progress-fill" class="update-progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <div class="update-banner-actions">
+            <button type="button" id="btn-update-download" class="btn-update-action btn-download">
+              <span class="btn-icon">⬇️</span> Baixar Agora
+            </button>
+            <button type="button" id="btn-update-install" class="btn-update-action btn-install" style="display: none;">
+              <span class="btn-icon">🔄</span> Reiniciar e Atualizar
+            </button>
+            <button type="button" id="btn-update-dismiss" class="btn-update-action btn-dismiss">
+              ✕ Depois
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
