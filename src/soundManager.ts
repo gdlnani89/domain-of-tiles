@@ -735,8 +735,48 @@ class SoundManager {
 
     osc.connect(oGain);
     oGain.connect(this.masterGain);
+  }
+
+  /**
+   * hammer: Som de martelada/construção e reparo de estruturas
+   */
+  public hammer(): void {
+    if (this.isMuted) return;
+    const ctx = this.initContext();
+    if (!ctx || !this.masterGain) return;
+    if (!this.throttle('hammer', 180)) return;
+
+    const t = ctx.currentTime;
+
+    // 1. Clink metálico agudo do martelo atingindo a estrutura
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1400, t);
+    osc.frequency.exponentialRampToValueAtTime(700, t + 0.08);
+
+    oscGain.gain.setValueAtTime(0.25, t);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+
+    osc.connect(oscGain);
+    oscGain.connect(this.masterGain);
     osc.start(t);
-    osc.stop(t + 0.08);
+    osc.stop(t + 0.09);
+
+    // 2. Impacto surdo da madeira/pedra
+    const thud = ctx.createOscillator();
+    const thudGain = ctx.createGain();
+    thud.type = 'triangle';
+    thud.frequency.setValueAtTime(220, t);
+    thud.frequency.exponentialRampToValueAtTime(80, t + 0.12);
+
+    thudGain.gain.setValueAtTime(0.35, t);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+
+    thud.connect(thudGain);
+    thudGain.connect(this.masterGain);
+    thud.start(t);
+    thud.stop(t + 0.13);
   }
 }
 

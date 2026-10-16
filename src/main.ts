@@ -138,6 +138,7 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
 
 export const currentMatchConfig: MatchConfig = { ...DEFAULT_MATCH_CONFIG };
 export let isMatchConfigModalOpen = true; // Inicia pausado com o modal de configuração pré-jogo
+export let isSaveLoadModalOpen = false;
 export let hasMatchEverStarted = false;
 export let hasEnemyFaction = true;
 
@@ -2302,6 +2303,9 @@ export interface ConstructionBuilding {
   selectedCollegeCourse?: EliteCourse;
   hp?: number;
   maxHp?: number;
+  hpBarGroup?: THREE.Group;
+  hpBarFillMesh?: THREE.Mesh;
+  hpBarShowUntil?: number;
 
   // Propriedades de Fortificação (Portões)
   gateState?: 'CLOSED' | 'OPENING' | 'OPEN' | 'CLOSING';
@@ -8070,6 +8074,12 @@ const tcQueueStatusTextEl = document.getElementById('tc-queue-status-text');
 const tcQueueProgressTrackEl = document.getElementById('tc-queue-progress-track');
 const tcQueueProgressFillEl = document.getElementById('tc-queue-progress-fill');
 const tcQueueTimerLabelEl = document.getElementById('tc-queue-timer-label');
+const btnRepairTc = document.getElementById('btn-repair-tc');
+
+// Generic Building HUD & Repair
+const buildingHudPanelEl = document.getElementById('building-hud-panel');
+const btnCloseBuilding = document.getElementById('btn-close-building');
+const btnRepairGeneric = document.getElementById('btn-repair-generic');
 
 let selectedBuilding: ConstructionBuilding | null = null;
 export let isTownCenterSelected = false;
@@ -8273,18 +8283,334 @@ window.addEventListener('pointerdown', (e) => {
   }
 });
 
+// --- SISTEMA DE REPARO DE EDIFÍCIOS & BARRAS DE HP BILLBOARD ---
+export function ensureBuildingHp(building: ConstructionBuilding): void {
+  if (building.maxHp === undefined || building.maxHp <= 0) {
+    if (building.type === 'TOWER') building.maxHp = 250;
+    else if (building.type === 'WALL') building.maxHp = WALL_HP;
+    else if (building.type === 'GATE') building.maxHp = GATE_HP;
+    else if (building.type === 'COLLEGE') building.maxHp = 400;
+    else if (building.size === 3) building.maxHp = 400;
+    else if (building.size === 2) building.maxHp = 300;
+    else building.maxHp = 150;
+  }
+  if (building.hp === undefined) {
+    building.hp = building.maxHp;
+  }
+}
+
+export function getBuildingDisplayName(type: string): string {
+  switch (type) {
+    case 'TOWN_CENTER': return 'Centro da Cidade';
+    case 'BARRACKS': return 'Quartel';
+    case 'ARCHERY_RANGE': return 'Campo de Tiro com Arco';
+    case 'HOUSE': return 'Casa';
+    case 'MILL': return 'Moinho';
+    case 'FARM': return 'Fazenda';
+    case 'LUMBER_CAMP': return 'Madeireira';
+    case 'MINING_CAMP': return 'Campo de Mineração';
+    case 'TOWER': return 'Torre de Vigia';
+    case 'WALL': return 'Muralha de Pedra';
+    case 'GATE': return 'Portão Fortificado';
+    case 'SCHOOL': return 'Escola da Vila';
+    case 'COLLEGE': return 'Real Faculdade';
+    default: return 'Estrutura';
+  }
+}
+
+export function getRepairCostRates(type: string, maxHp: number): { woodPerHp: number; stonePerHp: number } {
+  let woodCost = 0;
+  let stoneCost = 0;
+  switch (type) {
+    case 'TOWN_CENTER': woodCost = 280; stoneCost = 0; break;
+    case 'BARRACKS': woodCost = BARRACKS_COST_WOOD; stoneCost = 0; break;
+    case 'ARCHERY_RANGE': woodCost = ARCHERY_RANGE_COST_WOOD; stoneCost = ARCHERY_RANGE_COST_STONE; break;
+    case 'HOUSE': woodCost = HOUSE_COST_WOOD; stoneCost = 0; break;
+    case 'MILL': woodCost = MILL_COST_WOOD; stoneCost = 0; break;
+    case 'FARM': woodCost = FARM_COST_WOOD; stoneCost = 0; break;
+    case 'LUMBER_CAMP': woodCost = LUMBER_CAMP_COST_WOOD; stoneCost = 0; break;
+    case 'MINING_CAMP': woodCost = MINING_CAMP_COST_WOOD; stoneCost = 0; break;
+    case 'TOWER': woodCost = TOWER_COST_WOOD; stoneCost = TOWER_COST_STONE; break;
+    case 'WALL': woodCost = 0; stoneCost = WALL_COST_STONE; break;
+    case 'GATE': woodCost = GATE_COST_WOOD; stoneCost = GATE_COST_STONE; break;
+    case 'SCHOOL': woodCost = SCHOOL_COST_WOOD; stoneCost = SCHOOL_COST_STONE; break;
+    case 'COLLEGE': woodCost = COLLEGE_COST_WOOD; stoneCost = COLLEGE_COST_STONE; break;
+    default: woodCost = 50; stoneCost = 0; break;
+  }
+  const effectiveMaxHp = Math.max(1, maxHp);
+  return {
+    woodPerHp: (woodCost * 0.5) / effectiveMaxHp,
+    stonePerHp: (stoneCost * 0.5) / effectiveMaxHp
+  };
+}
+
+export function createBuildingHpBar(building: ConstructionBuilding): { group: THREE.Group; fillMesh: THREE.Mesh } {
+  const group = new THREE.Group();
+  let height = 2.4;
+  let barWidth = 1.6;
+  if (building.type === 'TOWER') { height = 4.2; barWidth = 1.6; }
+  else if (building.type === 'COLLEGE') { height = 3.8; barWidth = 2.2; }
+  else if (building.type === 'GATE') { height = 3.5; barWidth = 2.0; }
+  else if (building.type === 'SCHOOL' || building.type === 'MILL') { height = 3.2; barWidth = 1.8; }
+  else if (building.type === 'BARRACKS' || building.type === 'ARCHERY_RANGE') { height = 3.0; barWidth = 1.8; }
+  else if (building.type === 'WALL') { height = 2.0; barWidth = 1.2; }
+  else if (building.type === 'FARM') { height = 1.5; barWidth = 1.6; }
+  else if (building.size === 3) { height = 3.8; barWidth = 2.2; }
+  else if (building.size === 2) { height = 3.0; barWidth = 1.8; }
+
+  group.position.set(0, height, 0);
+
+  const bgGeo = new THREE.PlaneGeometry(barWidth, 0.18);
+  const bgMat = new THREE.MeshBasicMaterial({ color: 0x090d16, side: THREE.DoubleSide });
+  const bg = new THREE.Mesh(bgGeo, bgMat);
+  group.add(bg);
+
+  const fillWidth = barWidth - 0.08;
+  const fillGeo = new THREE.PlaneGeometry(fillWidth, 0.12);
+  const fillMat = new THREE.MeshBasicMaterial({ color: building.faction === 'ENEMY' ? 0xef4444 : 0x22c55e, side: THREE.DoubleSide });
+  const fill = new THREE.Mesh(fillGeo, fillMat);
+  fill.position.z = 0.005;
+  group.add(fill);
+
+  group.visible = false;
+  building.group.add(group);
+  building.hpBarGroup = group;
+  building.hpBarFillMesh = fill;
+
+  return { group, fillMesh: fill };
+}
+
+export function updateBuildingHpBar(building: ConstructionBuilding, now?: number): void {
+  if (!building.hpBarGroup || !building.hpBarFillMesh) {
+    createBuildingHpBar(building);
+  }
+  ensureBuildingHp(building);
+
+  const pct = THREE.MathUtils.clamp((building.hp ?? building.maxHp ?? 1) / (building.maxHp ?? 1), 0, 1);
+  building.hpBarFillMesh!.scale.x = Math.max(0.001, pct);
+
+  let barWidth = 1.6;
+  if (building.type === 'TOWER') { barWidth = 1.6; }
+  else if (building.type === 'COLLEGE') { barWidth = 2.2; }
+  else if (building.type === 'GATE') { barWidth = 2.0; }
+  else if (building.type === 'SCHOOL' || building.type === 'MILL' || building.type === 'BARRACKS' || building.type === 'ARCHERY_RANGE') { barWidth = 1.8; }
+  else if (building.type === 'WALL') { barWidth = 1.2; }
+  else if (building.size === 3) { barWidth = 2.2; }
+  else if (building.size === 2) { barWidth = 1.8; }
+
+  const fillWidth = barWidth - 0.08;
+  const halfW = fillWidth / 2;
+  building.hpBarFillMesh!.position.x = -halfW * (1 - pct);
+
+  const mat = building.hpBarFillMesh!.material as THREE.MeshBasicMaterial;
+  if (building.faction === 'ENEMY') {
+    mat.color.setHex(0xef4444);
+  } else {
+    if (pct > 0.5) {
+      mat.color.setHex(0x22c55e);
+    } else if (pct > 0.25) {
+      mat.color.setHex(0xf59e0b);
+    } else {
+      mat.color.setHex(0xef4444);
+    }
+  }
+
+  const isDamaged = (building.hp ?? 0) < (building.maxHp ?? 1);
+  const isSelected = selectedBuilding === building;
+  const showTemporary = now !== undefined && building.hpBarShowUntil !== undefined && building.hpBarShowUntil > now;
+
+  if (building.isCompleted && (isDamaged || isSelected || showTemporary)) {
+    building.hpBarGroup!.visible = true;
+  } else {
+    building.hpBarGroup!.visible = false;
+  }
+}
+
+export function isTownCenterDamaged(): boolean {
+  return !townCenterState.isDestroyed && townCenterState.hp < townCenterState.maxHp;
+}
+
+export function pickTownCenterPerimeterCell(unit: RTSUnit): THREE.Vector2 {
+  const perim: THREE.Vector2[] = [];
+  for (let x = tcCoord.minX - 1; x <= tcCoord.maxX + 1; x++) {
+    for (let z = tcCoord.minZ - 1; z <= tcCoord.maxZ + 1; z++) {
+      if (x >= tcCoord.minX && x <= tcCoord.maxX && z >= tcCoord.minZ && z <= tcCoord.maxZ) {
+        continue;
+      }
+      if (isCellWalkable(x, z)) {
+        perim.push(new THREE.Vector2(x, z));
+      }
+    }
+  }
+  if (perim.length === 0) {
+    return findClosestWalkableCell(new THREE.Vector2(0, 0), unitCell(unit));
+  }
+  const pos = unit.group.position;
+  let best = perim[0];
+  let bestDist = Infinity;
+  for (const c of perim) {
+    const dist = Math.hypot(c.x + 0.5 - pos.x, c.y + 0.5 - pos.z);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = c;
+    }
+  }
+  return best;
+}
+
+export function findNearbyDamagedBuilding(
+  pos: THREE.Vector3,
+  faction: UnitFaction,
+  maxRadius = 5.0
+): ConstructionBuilding | null {
+  let best: ConstructionBuilding | null = null;
+  let bestDist = maxRadius;
+
+  for (const b of buildingsList) {
+    if (b.isDepleted) continue;
+    if (b.faction !== faction) continue;
+    if (!b.isCompleted || b.progress < 100) continue;
+    ensureBuildingHp(b);
+    if ((b.hp ?? 0) >= (b.maxHp ?? 1)) continue;
+
+    const d = pos.distanceTo(b.worldCenter);
+    if (d < bestDist) {
+      bestDist = d;
+      best = b;
+    }
+  }
+  return best;
+}
+
+export function dispatchNearbyIdleVillagerToRepair(target: ConstructionBuilding | 'TOWN_CENTER'): boolean {
+  const targetPos = target === 'TOWN_CENTER' ? TC_WORLD_CENTER : target.worldCenter;
+  let nearestVillager: RTSUnit | null = null;
+  let nearestDist = 12.0;
+
+  for (const u of unitsList) {
+    if (u.faction !== 'PLAYER' || u.isDying || u.unitType !== 'VILLAGER') continue;
+    if (u.state !== 'IDLE') continue;
+    const d = u.group.position.distanceTo(targetPos);
+    if (d <= nearestDist) {
+      nearestDist = d;
+      nearestVillager = u;
+    }
+  }
+
+  if (nearestVillager) {
+    if (target === 'TOWN_CENTER') {
+      commandRepairTownCenter(nearestVillager);
+      spawnFloatingText(TC_WORLD_CENTER.clone().setY(2.6), '🔧 Aldeão despachado para reparar!', '#38bdf8');
+    } else {
+      commandRepairBuilding(nearestVillager, target);
+      spawnFloatingText(target.worldCenter.clone().setY(2.6), '🔧 Aldeão despachado para reparar!', '#38bdf8');
+    }
+    soundManager.orderMove();
+    return true;
+  } else {
+    spawnFloatingText(targetPos.clone().setY(2.6), '⚠️ Nenhum aldeão ocioso por perto (raio 12)!', '#f87171');
+    soundManager.popCappedAlert();
+    return false;
+  }
+}
+
+export function updateTownCenterSelectedHUD() {
+  const tcHpValEl = document.getElementById('tc-hp-val');
+  const tcHpFillEl = document.getElementById('tc-hp-fill');
+  const btnRepairTcEl = document.getElementById('btn-repair-tc') as HTMLButtonElement | null;
+  if (!tcHpValEl || !tcHpFillEl) return;
+
+  const hp = Math.floor(townCenterState.hp);
+  const max = townCenterState.maxHp;
+  const pct = Math.max(0, Math.min(100, (hp / max) * 100));
+
+  tcHpValEl.textContent = `${hp} / ${max} HP`;
+  tcHpFillEl.style.width = `${pct}%`;
+  tcHpFillEl.style.background = pct > 50 ? 'linear-gradient(90deg, #10b981, #22c55e)' : (pct > 25 ? 'linear-gradient(90deg, #f59e0b, #eab308)' : 'linear-gradient(90deg, #ef4444, #dc2626)');
+
+  if (btnRepairTcEl) {
+    btnRepairTcEl.style.display = hp < max ? 'flex' : 'none';
+  }
+}
+
+export function updateBuildingSelectedHUD(building: ConstructionBuilding) {
+  ensureBuildingHp(building);
+  const hp = Math.floor(building.hp ?? building.maxHp ?? 1);
+  const max = building.maxHp ?? 1;
+  const pct = Math.max(0, Math.min(100, (hp / max) * 100));
+  const isDamaged = hp < max;
+
+  if (selectedBuilding === building) {
+    const bldTitleEl = document.getElementById('bld-panel-title');
+    const bldBadgeEl = document.getElementById('bld-panel-badge');
+    const bldHpValEl = document.getElementById('bld-hp-val');
+    const bldHpFillEl = document.getElementById('bld-hp-fill');
+    const btnRepairGeneric = document.getElementById('btn-repair-generic') as HTMLButtonElement | null;
+
+    if (bldTitleEl) {
+      const icon =
+        building.type === 'HOUSE' ? '🏠' :
+        building.type === 'TOWER' ? '🏹' :
+        building.type === 'WALL' ? '🧱' :
+        building.type === 'GATE' ? '🚪' :
+        building.type === 'LUMBER_CAMP' ? '🪵' :
+        building.type === 'MINING_CAMP' ? '🪨' : '🏛️';
+      bldTitleEl.textContent = `${icon} ${getBuildingDisplayName(building.type)}`;
+    }
+    if (bldBadgeEl) {
+      bldBadgeEl.textContent = building.type;
+    }
+    if (bldHpValEl) {
+      bldHpValEl.textContent = `${hp} / ${max} HP`;
+    }
+    if (bldHpFillEl) {
+      bldHpFillEl.style.width = `${pct}%`;
+      bldHpFillEl.style.background = pct > 50 ? 'linear-gradient(90deg, #10b981, #22c55e)' : (pct > 25 ? 'linear-gradient(90deg, #f59e0b, #eab308)' : 'linear-gradient(90deg, #ef4444, #dc2626)');
+    }
+    if (btnRepairGeneric) {
+      btnRepairGeneric.style.display = isDamaged ? 'flex' : 'none';
+    }
+
+    let specificPrefix = '';
+    if (building.type === 'BARRACKS') specificPrefix = 'barracks';
+    else if (building.type === 'ARCHERY_RANGE') specificPrefix = 'archery';
+    else if (building.type === 'FARM') specificPrefix = 'farm';
+    else if (building.type === 'MILL') specificPrefix = 'mill';
+    else if (building.type === 'SCHOOL') specificPrefix = 'school';
+    else if (building.type === 'COLLEGE') specificPrefix = 'college';
+
+    if (specificPrefix) {
+      const sValEl = document.getElementById(`${specificPrefix}-hp-val`);
+      const sFillEl = document.getElementById(`${specificPrefix}-hp-fill`);
+      const sBtnRepair = document.querySelector(`#${specificPrefix}-hud-panel .btn-repair-action`) as HTMLButtonElement | null;
+
+      if (sValEl) sValEl.textContent = `${hp} / ${max} HP`;
+      if (sFillEl) {
+        sFillEl.style.width = `${pct}%`;
+        sFillEl.style.background = pct > 50 ? 'linear-gradient(90deg, #10b981, #22c55e)' : (pct > 25 ? 'linear-gradient(90deg, #f59e0b, #eab308)' : 'linear-gradient(90deg, #ef4444, #dc2626)');
+      }
+      if (sBtnRepair) {
+        sBtnRepair.style.display = isDamaged ? 'flex' : 'none';
+      }
+    }
+  }
+}
+
 function selectTownCenter() {
   soundManager.uiClick();
   deselectAllUnits();
   if (selectedBuilding) {
     if (selectedBuilding.selectionMesh) selectedBuilding.selectionMesh.visible = false;
+    updateBuildingHpBar(selectedBuilding);
     selectedBuilding = null;
   }
   if (barracksHudPanelEl) barracksHudPanelEl.style.display = 'none';
+  if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
 
   isTownCenterSelected = true;
   if (tcHudPanelEl) tcHudPanelEl.style.display = 'flex';
   updateTownCenterHUD();
+  updateTownCenterSelectedHUD();
 }
 
 function deselectTownCenter() {
@@ -8298,6 +8624,7 @@ function selectBuilding(building: ConstructionBuilding) {
   deselectTownCenter();
   if (selectedBuilding && selectedBuilding !== building) {
     if (selectedBuilding.selectionMesh) selectedBuilding.selectionMesh.visible = false;
+    updateBuildingHpBar(selectedBuilding);
   }
   selectedBuilding = building;
   if (building.selectionMesh) building.selectionMesh.visible = true;
@@ -8308,6 +8635,7 @@ function selectBuilding(building: ConstructionBuilding) {
   if (millHudPanelEl) millHudPanelEl.style.display = 'none';
   if (schoolPanelEl) schoolPanelEl.style.display = 'none';
   if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'none';
+  if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
 
   if (building.type === 'BARRACKS' && building.isCompleted) {
     if (barracksHudPanelEl) barracksHudPanelEl.style.display = 'flex';
@@ -8326,12 +8654,17 @@ function selectBuilding(building: ConstructionBuilding) {
   } else if (building.type === 'COLLEGE' && building.isCompleted) {
     if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'flex';
     updateCollegeHUD();
+  } else if (building.isCompleted) {
+    if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'flex';
   }
+  updateBuildingSelectedHUD(building);
+  updateBuildingHpBar(building);
 }
 
 function deselectBuilding() {
   if (selectedBuilding) {
     if (selectedBuilding.selectionMesh) selectedBuilding.selectionMesh.visible = false;
+    updateBuildingHpBar(selectedBuilding);
     selectedBuilding = null;
   }
   if (barracksHudPanelEl) barracksHudPanelEl.style.display = 'none';
@@ -8340,6 +8673,7 @@ function deselectBuilding() {
   if (millHudPanelEl) millHudPanelEl.style.display = 'none';
   if (schoolPanelEl) schoolPanelEl.style.display = 'none';
   if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'none';
+  if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
   deselectTownCenter();
 }
 
@@ -9042,7 +9376,11 @@ function updateUnitHUD() {
   }
 
   if (unitCardRoleEl) {
-    if (unit.unitType === 'SWORDSMAN') {
+    if (unit.state === 'REPAIRING') {
+      unitCardRoleEl.textContent = '🔧 Reparando Estrutura';
+    } else if (unit.state === 'MOVING_TO_REPAIR') {
+      unitCardRoleEl.textContent = '🚶 Indo Reparar Estrutura';
+    } else if (unit.unitType === 'SWORDSMAN') {
       unitCardRoleEl.textContent = 'Infantaria Militar Aliada';
     } else if (unit.educationLevel >= 2) {
       const specName =
@@ -9825,6 +10163,8 @@ type UnitState =
   | 'DEPOSITING'
   | 'MOVING_TO_BUILD'
   | 'BUILDING'
+  | 'MOVING_TO_REPAIR'
+  | 'REPAIRING'
   | 'ATTACKING'
   | 'ATTACKING_STRUCTURE'
   | 'MOVING_TO_SCHOOL'
@@ -9901,6 +10241,11 @@ export interface RTSUnit {
   isEnemyPatrol?: boolean;
   patrolTargetCell?: THREE.Vector2 | null;
   patrolWaitUntil?: number;
+
+  // Propriedades do Sistema de Reparo
+  repairWoodSpent?: number;
+  repairStoneSpent?: number;
+  repairSoundTimer?: number;
 }
 
 const GATHER_AMOUNT = 10;
@@ -11019,6 +11364,50 @@ function commandBuild(unit: RTSUnit, building: ConstructionBuilding) {
   setUnitPath(unit, unit.buildCell);
 }
 
+export function commandRepairBuilding(unit: RTSUnit, building: ConstructionBuilding) {
+  if (unit.unitType !== 'VILLAGER') return;
+  resetChopPose(unit);
+  clearUnitFarmTarget(unit);
+  unit.state = 'MOVING_TO_REPAIR';
+  unit.targetBuilding = building;
+  unit.targetStructure = 'BUILDING';
+  unit.targetTree = null;
+  unit.targetBerryBush = null;
+  unit.targetStoneMine = null;
+  unit.targetGoldMine = null;
+  unit.targetEnemy = null;
+  unit.gatherCell = null;
+  unit.dropoffTarget = null;
+  unit.dropoffBuilding = null;
+  unit.repairWoodSpent = 0;
+  unit.repairStoneSpent = 0;
+  unit.repairSoundTimer = 0;
+  unit.buildCell = pickBuildCell(unit, building);
+  setUnitPath(unit, unit.buildCell);
+}
+
+export function commandRepairTownCenter(unit: RTSUnit) {
+  if (unit.unitType !== 'VILLAGER') return;
+  resetChopPose(unit);
+  clearUnitFarmTarget(unit);
+  unit.state = 'MOVING_TO_REPAIR';
+  unit.targetBuilding = null;
+  unit.targetStructure = 'TOWN_CENTER';
+  unit.targetTree = null;
+  unit.targetBerryBush = null;
+  unit.targetStoneMine = null;
+  unit.targetGoldMine = null;
+  unit.targetEnemy = null;
+  unit.gatherCell = null;
+  unit.dropoffTarget = null;
+  unit.dropoffBuilding = null;
+  unit.repairWoodSpent = 0;
+  unit.repairStoneSpent = 0;
+  unit.repairSoundTimer = 0;
+  unit.buildCell = pickTownCenterPerimeterCell(unit);
+  setUnitPath(unit, unit.buildCell);
+}
+
 function commandReturnToBase(unit: RTSUnit) {
   resetChopPose(unit);
   unit.targetEnemy = null;
@@ -11059,6 +11448,9 @@ function goIdle(unit: RTSUnit) {
   unit.buildCell = null;
   unit.dropoffTarget = null;
   unit.dropoffBuilding = null;
+  unit.repairWoodSpent = 0;
+  unit.repairStoneSpent = 0;
+  unit.repairSoundTimer = 0;
   unit.waypoints = [];
 }
 
@@ -11859,6 +12251,202 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
               }
             }
           });
+        }
+      }
+      break;
+    }
+
+    case 'MOVING_TO_REPAIR': {
+      if (unit.targetStructure === 'TOWN_CENTER') {
+        if (townCenterState.isDestroyed || townCenterState.hp >= townCenterState.maxHp) {
+          goIdle(unit);
+          break;
+        }
+        const dist = Math.hypot(unit.group.position.x - TC_WORLD_CENTER.x, unit.group.position.z - TC_WORLD_CENTER.z);
+        if (dist <= 2.6 || moveAlongPath(unit, delta)) {
+          unit.state = 'REPAIRING';
+          unit.waypoints = [];
+        }
+      } else {
+        const b = unit.targetBuilding;
+        if (!b || b.isDepleted || !b.isCompleted || (b.hp ?? 0) >= (b.maxHp ?? 1)) {
+          const next = findNearbyDamagedBuilding(unit.group.position, unit.faction, 5.0);
+          if (next) {
+            commandRepairBuilding(unit, next);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+        const dist = Math.hypot(unit.group.position.x - b.worldCenter.x, unit.group.position.z - b.worldCenter.z);
+        const reach = (b.size === 1 ? 1.6 : (b.size === 3 ? 2.5 : 2.0));
+        if (dist <= reach || moveAlongPath(unit, delta)) {
+          unit.state = 'REPAIRING';
+          unit.waypoints = [];
+        }
+      }
+      break;
+    }
+
+    case 'REPAIRING': {
+      if (unit.targetStructure === 'TOWN_CENTER') {
+        if (townCenterState.isDestroyed || townCenterState.hp >= townCenterState.maxHp) {
+          spawnFloatingText(TC_WORLD_CENTER.clone().setY(3.2), '✨ Estrutura Totalmente Reparada!', '#22c55e');
+          soundManager.buildingComplete();
+          const next = findNearbyDamagedBuilding(unit.group.position, unit.faction, 5.0);
+          if (next) {
+            commandRepairBuilding(unit, next);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        faceTowards(unit, TC_WORLD_CENTER.x, TC_WORLD_CENTER.z, 0.3);
+
+        // Animação de martelar (balanço rítmico do corpo)
+        const hammerSwing = Math.sin(now * 0.012);
+        unit.cylinderMesh.rotation.x = Math.max(0, hammerSwing) * 0.42;
+
+        // Som de martelo e faíscas periódicas
+        unit.repairSoundTimer = (unit.repairSoundTimer ?? 0) + delta;
+        if (unit.repairSoundTimer >= 0.45) {
+          unit.repairSoundTimer = 0;
+          soundManager.hammer();
+          spawnParticles(unit.group.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 3, 0xf59e0b);
+        }
+
+        // Custo proporcional
+        const rates = getRepairCostRates('TOWN_CENTER', townCenterState.maxHp);
+        const hpRate = 25.0; // 25 HP por segundo
+        const hpRestored = Math.min(hpRate * delta, townCenterState.maxHp - townCenterState.hp);
+        const woodCost = hpRestored * rates.woodPerHp;
+
+        if (woodCost > 0 && resources.wood <= 0) {
+          spawnFloatingText(unit.group.position.clone().setY(1.4), '⚠️ Sem recursos para reparar!', '#f87171');
+          goIdle(unit);
+          break;
+        }
+
+        unit.repairWoodSpent = (unit.repairWoodSpent ?? 0) + woodCost;
+        if (unit.repairWoodSpent >= 1) {
+          const toDeduct = Math.floor(unit.repairWoodSpent);
+          if (resources.wood < toDeduct) {
+            spawnFloatingText(unit.group.position.clone().setY(1.4), '⚠️ Sem recursos para reparar!', '#f87171');
+            goIdle(unit);
+            break;
+          }
+          resources.wood -= toDeduct;
+          unit.repairWoodSpent -= toDeduct;
+        }
+
+        townCenterState.hp = Math.min(townCenterState.maxHp, townCenterState.hp + hpRestored);
+        updateTownCenterHpBar();
+        updateTownCenterSelectedHUD();
+
+        if (townCenterState.hp >= townCenterState.maxHp) {
+          townCenterState.hp = townCenterState.maxHp;
+          updateTownCenterHpBar();
+          updateTownCenterSelectedHUD();
+          spawnFloatingText(TC_WORLD_CENTER.clone().setY(3.2), '✨ Estrutura Totalmente Reparada!', '#22c55e');
+          soundManager.buildingComplete();
+
+          const next = findNearbyDamagedBuilding(unit.group.position, unit.faction, 5.0);
+          if (next) {
+            commandRepairBuilding(unit, next);
+          } else {
+            goIdle(unit);
+          }
+        }
+      } else {
+        const b = unit.targetBuilding;
+        if (!b || b.isDepleted || !b.isCompleted || (b.hp ?? 0) >= (b.maxHp ?? 1)) {
+          if (b && b.isCompleted && (b.hp ?? 0) >= (b.maxHp ?? 1)) {
+            spawnFloatingText(b.worldCenter.clone().setY(2.6), '✨ Estrutura Totalmente Reparada!', '#22c55e');
+            soundManager.buildingComplete();
+          }
+          const next = findNearbyDamagedBuilding(unit.group.position, unit.faction, 5.0);
+          if (next) {
+            commandRepairBuilding(unit, next);
+          } else if (isTownCenterDamaged() && unit.group.position.distanceTo(TC_WORLD_CENTER) <= 7.0) {
+            commandRepairTownCenter(unit);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        faceTowards(unit, b.worldCenter.x, b.worldCenter.z, 0.3);
+
+        // Animação de martelar
+        const hammerSwing = Math.sin(now * 0.012);
+        unit.cylinderMesh.rotation.x = Math.max(0, hammerSwing) * 0.42;
+
+        // Som de martelo e faíscas periódicas
+        unit.repairSoundTimer = (unit.repairSoundTimer ?? 0) + delta;
+        if (unit.repairSoundTimer >= 0.45) {
+          unit.repairSoundTimer = 0;
+          soundManager.hammer();
+          spawnParticles(unit.group.position.clone().add(new THREE.Vector3(0, 0.4, 0)), 3, 0xf59e0b);
+        }
+
+        ensureBuildingHp(b);
+        const rates = getRepairCostRates(b.type, b.maxHp!);
+        const hpRate = 25.0; // 25 HP por segundo
+        const hpRestored = Math.min(hpRate * delta, b.maxHp! - b.hp!);
+        const woodCost = hpRestored * rates.woodPerHp;
+        const stoneCost = hpRestored * rates.stonePerHp;
+
+        if ((woodCost > 0 && resources.wood <= 0) || (stoneCost > 0 && resources.stone <= 0)) {
+          spawnFloatingText(unit.group.position.clone().setY(1.4), '⚠️ Sem recursos para reparar!', '#f87171');
+          goIdle(unit);
+          break;
+        }
+
+        unit.repairWoodSpent = (unit.repairWoodSpent ?? 0) + woodCost;
+        if (unit.repairWoodSpent >= 1) {
+          const toDeduct = Math.floor(unit.repairWoodSpent);
+          if (resources.wood < toDeduct) {
+            spawnFloatingText(unit.group.position.clone().setY(1.4), '⚠️ Sem recursos para reparar!', '#f87171');
+            goIdle(unit);
+            break;
+          }
+          resources.wood -= toDeduct;
+          unit.repairWoodSpent -= toDeduct;
+        }
+
+        unit.repairStoneSpent = (unit.repairStoneSpent ?? 0) + stoneCost;
+        if (unit.repairStoneSpent >= 1) {
+          const toDeduct = Math.floor(unit.repairStoneSpent);
+          if (resources.stone < toDeduct) {
+            spawnFloatingText(unit.group.position.clone().setY(1.4), '⚠️ Sem recursos para reparar!', '#f87171');
+            goIdle(unit);
+            break;
+          }
+          resources.stone -= toDeduct;
+          unit.repairStoneSpent -= toDeduct;
+        }
+
+        b.hp = Math.min(b.maxHp!, b.hp! + hpRestored);
+        updateBuildingHpBar(b, now);
+        if (selectedBuilding === b) {
+          updateBuildingSelectedHUD(b);
+        }
+
+        if (b.hp >= b.maxHp!) {
+          b.hp = b.maxHp!;
+          updateBuildingHpBar(b, now);
+          spawnFloatingText(b.worldCenter.clone().setY(2.6), '✨ Estrutura Totalmente Reparada!', '#22c55e');
+          soundManager.buildingComplete();
+
+          const next = findNearbyDamagedBuilding(unit.group.position, unit.faction, 5.0);
+          if (next) {
+            commandRepairBuilding(unit, next);
+          } else if (isTownCenterDamaged() && unit.group.position.distanceTo(TC_WORLD_CENTER) <= 7.0) {
+            commandRepairTownCenter(unit);
+          } else {
+            goIdle(unit);
+          }
         }
       }
       break;
@@ -13274,12 +13862,34 @@ function updateHoverMarker(clientX: number, clientY: number) {
     return;
   }
 
+  // Verifica se o cursor está sobre o Centro da Cidade
+  if (isTownCenterUnderCursor(clientX, clientY)) {
+    const selectedVillagers = getSelectedUnits().filter((u) => u.faction === 'PLAYER' && u.unitType === 'VILLAGER');
+    if (selectedVillagers.length > 0 && isTownCenterDamaged()) {
+      setWalkableLabel(`🔧 Reparar Centro da Cidade (HP: ${Math.floor(townCenterState.hp)} / ${townCenterState.maxHp})`, '#22c55e');
+      renderer.domElement.style.cursor = 'pointer';
+      return;
+    }
+  }
+
   // Modo normal: verifica se há construção sob o cursor
   const building = getBuildingUnderCursor(clientX, clientY);
   if (building) {
     const bh = getTerrainHeight(building.worldCenter.x, building.worldCenter.z);
     markerGroup.position.set(building.worldCenter.x, bh + 0.015, building.worldCenter.z);
     markerGroup.visible = false;
+    ensureBuildingHp(building);
+
+    const selectedVillagers = getSelectedUnits().filter((u) => u.faction === 'PLAYER' && u.unitType === 'VILLAGER');
+    const isDamaged = building.faction === 'PLAYER' && building.isCompleted && (building.hp ?? 0) < (building.maxHp ?? 1);
+
+    if (selectedVillagers.length > 0 && isDamaged) {
+      const displayName = getBuildingDisplayName(building.type);
+      setWalkableLabel(`🔧 Reparar ${displayName} (HP: ${Math.floor(building.hp!)} / ${building.maxHp})`, '#22c55e');
+      renderer.domElement.style.cursor = 'pointer';
+      return;
+    }
+
     if (building.isCompleted) {
       const name =
         building.type === 'WALL' ? 'Muralha de Pedra (Concluída)' :
@@ -13428,6 +14038,27 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && hasMatchEverStarted) {
       closeMatchConfigModal();
     }
+    return;
+  }
+
+  // Atalho [F5]: Quick Save instantâneo
+  if (e.key === 'F5') {
+    e.preventDefault();
+    saveToSlot('rts_quicksave', 'Quick Save');
+    return;
+  }
+
+  // Atalho [F9]: Quick Load instantâneo do último Quick Save
+  if (e.key === 'F9') {
+    e.preventDefault();
+    loadFromSlot('rts_quicksave');
+    return;
+  }
+
+  // Atalho [Escape]: Fechar modal de Salvar/Carregar se aberto
+  if (e.key === 'Escape' && isSaveLoadModalOpen) {
+    e.preventDefault();
+    closeSaveLoadModal();
     return;
   }
 
@@ -13690,6 +14321,32 @@ btnCloseTc?.addEventListener('click', (e) => {
   deselectTownCenter();
 });
 
+btnCloseBuilding?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  deselectBuilding();
+});
+
+btnRepairGeneric?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedBuilding) {
+    dispatchNearbyIdleVillagerToRepair(selectedBuilding);
+  }
+});
+
+btnRepairTc?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  dispatchNearbyIdleVillagerToRepair('TOWN_CENTER');
+});
+
+document.querySelectorAll('.btn-repair-action').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (selectedBuilding) {
+      dispatchNearbyIdleVillagerToRepair(selectedBuilding);
+    }
+  });
+});
+
 window.addEventListener('keyup', (e) => {
   keys[e.key.toLowerCase()] = false;
 });
@@ -13699,6 +14356,7 @@ window.addEventListener('keyup', (e) => {
  * - Se em Placement Mode: Cancela sem gastar recursos
  * - Se clicar em Inimigo: Comanda ataque e perseguição
  * - Se clicar em Obra em andamento: Envia operários para construir
+ * - Se clicar em Edifício danificado: Envia aldeões para reparar
  * - Se clicar em Arbusto de Frutas: Forragear alimento
  * - Se clicar em Árvore: Coletar madeira
  * - Se clicar em Chão: Mover via A*
@@ -13736,6 +14394,26 @@ function handleRightClick(clientX: number, clientY: number) {
     }
   }
 
+  // 0.8. Verifica se clicou no Centro da Cidade Aliado
+  if (isTownCenterUnderCursor(clientX, clientY)) {
+    const villagers = selected.filter((u) => u.unitType === 'VILLAGER');
+    if (isTownCenterDamaged()) {
+      if (villagers.length > 0) {
+        spawnMoveMarker(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z, 0x22c55e);
+        console.log(`[RTS Reparo] ${villagers.length} aldeão(ões) enviados para reparar o Centro da Cidade.`);
+        villagers.forEach((v) => commandRepairTownCenter(v));
+        return;
+      }
+    } else {
+      const carryingVillagers = villagers.filter((v) => v.carrying > 0);
+      if (carryingVillagers.length > 0) {
+        carryingVillagers.forEach((v) => commandReturnToBase(v));
+        spawnMoveMarker(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z, 0x22c55e);
+        return;
+      }
+    }
+  }
+
   // 1. Verifica se clicou em uma construção
   const building = getBuildingUnderCursor(clientX, clientY);
   if (building) {
@@ -13754,6 +14432,17 @@ function handleRightClick(clientX: number, clientY: number) {
         return;
       }
     } else {
+      // Edifício aliado concluído e danificado: Aldeões entram no modo de reparo
+      ensureBuildingHp(building);
+      if (building.faction === 'PLAYER' && (building.hp ?? 0) < (building.maxHp ?? 1)) {
+        const villagers = selected.filter((u) => u.unitType === 'VILLAGER');
+        if (villagers.length > 0) {
+          spawnMoveMarker(building.worldCenter.x, building.worldCenter.z, 0x22c55e);
+          console.log(`[RTS Reparo] ${villagers.length} aldeão(ões) enviados para reparar ${building.type}.`);
+          villagers.forEach((v) => commandRepairBuilding(v, building));
+          return;
+        }
+      }
       if (building.type === 'FARM') {
         if (building.isDepleted) {
           if (resources.wood >= FARM_COST_WOOD) {
@@ -14513,11 +15202,13 @@ export const destroyEnemyTent = destroyEnemyTownCenter;
 
 export function damageBuilding(building: ConstructionBuilding, dmg: number, _now: number) {
   if (building.isDepleted) return;
-  if (building.hp === undefined) {
-    building.maxHp = building.size === 3 ? 400 : (building.size === 2 ? 300 : 150);
-    building.hp = building.maxHp;
+  ensureBuildingHp(building);
+  building.hp = Math.max(0, (building.hp ?? building.maxHp ?? 1) - dmg);
+  building.hpBarShowUntil = _now + 6000;
+  updateBuildingHpBar(building, _now);
+  if (selectedBuilding === building) {
+    updateBuildingSelectedHUD(building);
   }
-  building.hp = Math.max(0, building.hp - dmg);
   spawnParticles(building.worldCenter.clone().add(new THREE.Vector3(0, 1.0, 0)), 4, 0xef4444);
 
   if (building.hp <= 0) {
@@ -14568,6 +15259,9 @@ export function damageTownCenter(dmg: number, _now: number) {
   if (townCenterState.isDestroyed) return;
   townCenterState.hp = Math.max(0, townCenterState.hp - dmg);
   updateTownCenterHpBar();
+  if (isTownCenterSelected) {
+    updateTownCenterSelectedHUD();
+  }
 
   spawnParticles(TC_WORLD_CENTER.clone().add(new THREE.Vector3(0, 1.2, 0)), 4, 0xf59e0b);
 
@@ -17326,6 +18020,11 @@ function animate() {
   if (enemyCampState?.hpBarGroup) {
     enemyCampState.hpBarGroup.quaternion.copy(camera.quaternion);
   }
+  for (const b of buildingsList) {
+    if (b.hpBarGroup?.visible) {
+      b.hpBarGroup.quaternion.copy(camera.quaternion);
+    }
+  }
 
   // Atualiza orientações e barras de HP das unidades
   for (const u of unitsList) {
@@ -17653,11 +18352,1257 @@ function setupElectronAutoUpdate(): void {
   };
 }
 
+// =============================================================================
+// SISTEMA DE SALVAMENTO E CARREGAMENTO DE PARTIDA (SAVE & LOAD GAME)
+// =============================================================================
+
+export type BuildingType =
+  | 'BARRACKS'
+  | 'TOWER'
+  | 'LUMBER_CAMP'
+  | 'MINING_CAMP'
+  | 'HOUSE'
+  | 'MILL'
+  | 'FARM'
+  | 'SCHOOL'
+  | 'COLLEGE'
+  | 'WALL'
+  | 'GATE'
+  | 'ARCHERY_RANGE';
+
+export interface SaveGameMetadata {
+  version: string;
+  saveName: string;
+  timestamp: number;
+  formattedDate: string;
+  mapSize: number;
+  gameMode: string;
+}
+
+export interface UnitSaveData {
+  id: number;
+  faction: 'ALLIED' | 'ENEMY';
+  type: UnitType;
+  gridX: number;
+  gridZ: number;
+  hp: number;
+  maxHp: number;
+  educationLevel: number;
+  specialization?: string;
+  carriedAmount: number;
+  carriedType?: string;
+
+  // NOVOS CAMPOS PARA RESTAURAÇÃO DE AÇÃO:
+  state: string; // 'IDLE', 'GATHERING', 'MOVING_TO_RESOURCE', 'BUILDING', 'MOVING_TO_BUILD', 'FARMING', 'RETURNING_TO_BASE', 'CHASING', 'ATTACKING', 'MOVING'
+  targetResourceId?: number;      // ID do nó de recurso (árvore, mina, arbusto)
+  targetResourceCoords?: { x: number; z: number }; // Coordenadas de backup do recurso
+  targetBuildingId?: number;      // ID do canteiro de obras ou edifício alvo
+  targetBuildingCoords?: { x: number; z: number }; // Coordenadas de backup da obra
+  targetUnitId?: number;          // ID da unidade inimiga em combate
+  currentPath?: { x: number; z: number }[]; // Rota A* restante se estava se movendo
+}
+
+export interface BuildingSaveData {
+  id: number;
+  type: BuildingType;
+  faction: 'ALLIED' | 'ENEMY';
+  gridX: number;
+  gridZ: number;
+  hp: number;
+  maxHp: number;
+  progress: number;
+  isCompleted: boolean;
+  enrolledStudentIds?: number[];
+  trainingQueue?: { unitType: UnitType; progressSec: number }[];
+  farmFood?: number;
+}
+
+export interface ResourceNodeSaveData {
+  id: number;
+  type: 'TREE' | 'BERRY_BUSH' | 'GOLD_MINE' | 'STONE_MINE';
+  gridX: number;
+  gridZ: number;
+  remainingAmount: number;
+}
+
+export interface FullSaveState {
+  metadata: SaveGameMetadata;
+  matchConfig: any;
+  camera: { targetX: number; targetZ: number; frustumSize: number };
+  playerResources: { wood: number; food: number; gold: number; stone: number };
+  enemyResources: { wood: number; food: number; gold: number; stone: number };
+  popCap: { player: number; enemy: number };
+  fogGrid: number[];
+  units: UnitSaveData[];
+  buildings: BuildingSaveData[];
+  resources: ResourceNodeSaveData[];
+}
+
+const QUICK_SAVE_KEY = 'rts_quicksave';
+
+let saveToastTimeout: any = null;
+export function showSaveToast(message: string, isError: boolean = false): void {
+  const toastEl = document.getElementById('save-toast');
+  const iconEl = document.getElementById('save-toast-icon');
+  const msgEl = document.getElementById('save-toast-msg');
+  if (!toastEl || !msgEl) return;
+
+  if (iconEl) {
+    iconEl.textContent = isError ? '⚠️' : (message.includes('📂') ? '📂' : (message.includes('⬇️') ? '⬇️' : '💾'));
+  }
+  msgEl.textContent = message;
+
+  toastEl.classList.remove('toast-error', 'toast-success');
+  toastEl.classList.add(isError ? 'toast-error' : 'toast-success', 'visible');
+
+  if (saveToastTimeout) clearTimeout(saveToastTimeout);
+  saveToastTimeout = setTimeout(() => {
+    toastEl.classList.remove('visible');
+  }, 3500);
+}
+
+export function serializeGameState(saveName: string = 'Partida Salva'): FullSaveState {
+  const d = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const formattedDate = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} às ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  // 1. Mapeia nós de recursos ainda disponíveis no mapa (com IDs numéricos e registro em Map)
+  const resourcesData: ResourceNodeSaveData[] = [];
+  const resourceIdMap = new Map<any, number>();
+  let resId = 1;
+  treesMap.forEach((tree) => {
+    if (tree.wood > 0) {
+      const id = resId++;
+      resourceIdMap.set(tree, id);
+      resourcesData.push({
+        id,
+        type: 'TREE',
+        gridX: tree.gridX,
+        gridZ: tree.gridZ,
+        remainingAmount: Math.round(tree.wood)
+      });
+    }
+  });
+  berryBushesMap.forEach((bush) => {
+    if (bush.food > 0) {
+      const id = resId++;
+      resourceIdMap.set(bush, id);
+      resourcesData.push({
+        id,
+        type: 'BERRY_BUSH',
+        gridX: bush.gridX,
+        gridZ: bush.gridZ,
+        remainingAmount: Math.round(bush.food)
+      });
+    }
+  });
+  stoneMinesMap.forEach((mine) => {
+    if (mine.stone > 0) {
+      const id = resId++;
+      resourceIdMap.set(mine, id);
+      resourcesData.push({
+        id,
+        type: 'STONE_MINE',
+        gridX: mine.gridX,
+        gridZ: mine.gridZ,
+        remainingAmount: Math.round(mine.stone)
+      });
+    }
+  });
+  goldMinesMap.forEach((mine) => {
+    if (mine.gold > 0) {
+      const id = resId++;
+      resourceIdMap.set(mine, id);
+      resourcesData.push({
+        id,
+        type: 'GOLD_MINE',
+        gridX: mine.gridX,
+        gridZ: mine.gridZ,
+        remainingAmount: Math.round(mine.gold)
+      });
+    }
+  });
+
+  // 2. Mapeia IDs numéricos para unidades ativas
+  const unitIdMap = new Map<string, number>();
+  unitsList
+    .filter((u) => !u.isDying)
+    .forEach((u, idx) => {
+      unitIdMap.set(u.id, idx + 1);
+    });
+
+  // 3. Mapeia edifícios ativos (com IDs numéricos e registro em Map)
+  const buildingIdMap = new Map<ConstructionBuilding, number>();
+  const buildingsData: BuildingSaveData[] = buildingsList.map((b, idx) => {
+    const bId = idx + 1;
+    buildingIdMap.set(b, bId);
+
+    const enrolledStudentIds = b.enrolledStudents
+      ? b.enrolledStudents
+          .map((s) => unitIdMap.get(s.unitId))
+          .filter((id): id is number => typeof id === 'number')
+      : undefined;
+
+    const trainingQueue = b.trainingQueue && b.trainingQueue.length > 0
+      ? b.trainingQueue.map((item) => ({
+          unitType: item.unitType as UnitType,
+          progressSec: b.trainingTimer || 0
+        }))
+      : undefined;
+
+    return {
+      id: bId,
+      type: b.type as BuildingType,
+      faction: (b.faction === 'ENEMY' ? 'ENEMY' : 'ALLIED') as 'ALLIED' | 'ENEMY',
+      gridX: b.gridX,
+      gridZ: b.gridZ,
+      hp: Math.round(b.hp ?? 100),
+      maxHp: Math.round(b.maxHp ?? 100),
+      progress: Math.round(b.progress),
+      isCompleted: b.isCompleted,
+      enrolledStudentIds: enrolledStudentIds && enrolledStudentIds.length > 0 ? enrolledStudentIds : undefined,
+      trainingQueue,
+      farmFood: b.type === 'FARM' && b.farmFood !== undefined ? Math.round(b.farmFood) : undefined
+    };
+  });
+
+  // 4. Mapeia unidades ativas capturando estado lógico, alvos relacionais e rotas A* restantes
+  const unitsData: UnitSaveData[] = unitsList
+    .filter((u) => !u.isDying)
+    .map((u) => {
+      const numId = unitIdMap.get(u.id) || 1;
+
+      let stateStr: string = u.state;
+      let targetResId: number | undefined;
+      let targetResCoords: { x: number; z: number } | undefined;
+      let targetBldId: number | undefined;
+      let targetBldCoords: { x: number; z: number } | undefined;
+      let targetUId: number | undefined;
+      let currentPathCoords: { x: number; z: number }[] | undefined;
+
+      // Fazenda
+      if (u.targetFarm) {
+        targetBldId = buildingIdMap.get(u.targetFarm);
+        targetBldCoords = { x: u.targetFarm.gridX, z: u.targetFarm.gridZ };
+        if (u.state === 'GATHERING' || u.state === 'MOVING_TO_RESOURCE') {
+          stateStr = 'FARMING';
+        }
+      }
+
+      // Recursos (árvore, mina, arbusto)
+      if (u.targetTree) {
+        targetResId = resourceIdMap.get(u.targetTree);
+        targetResCoords = { x: u.targetTree.gridX, z: u.targetTree.gridZ };
+      } else if (u.targetBerryBush) {
+        targetResId = resourceIdMap.get(u.targetBerryBush);
+        targetResCoords = { x: u.targetBerryBush.gridX, z: u.targetBerryBush.gridZ };
+      } else if (u.targetStoneMine) {
+        targetResId = resourceIdMap.get(u.targetStoneMine);
+        targetResCoords = { x: u.targetStoneMine.gridX, z: u.targetStoneMine.gridZ };
+      } else if (u.targetGoldMine) {
+        targetResId = resourceIdMap.get(u.targetGoldMine);
+        targetResCoords = { x: u.targetGoldMine.gridX, z: u.targetGoldMine.gridZ };
+      }
+
+      // Edifícios (canteiros de obras, reparo ou instituições educacionais)
+      if (u.targetBuilding) {
+        targetBldId = buildingIdMap.get(u.targetBuilding);
+        targetBldCoords = { x: u.targetBuilding.gridX, z: u.targetBuilding.gridZ };
+      } else if (u.targetStructure === 'TOWN_CENTER') {
+        targetBldCoords = { x: tcCoord.minX, z: tcCoord.minZ };
+      } else if (u.targetSchool) {
+        targetBldId = buildingIdMap.get(u.targetSchool);
+        targetBldCoords = { x: u.targetSchool.gridX, z: u.targetSchool.gridZ };
+      } else if (u.targetCollege) {
+        targetBldId = buildingIdMap.get(u.targetCollege);
+        targetBldCoords = { x: u.targetCollege.gridX, z: u.targetCollege.gridZ };
+      }
+
+      // Combate contra unidade inimiga
+      if (u.targetEnemy) {
+        targetUId = unitIdMap.get(u.targetEnemy.id);
+      }
+
+      // Rota de movimento restante se estava se movendo
+      if (u.waypoints && u.waypoints.length > 0) {
+        const remaining = u.waypoints.slice(u.currentWaypointIndex || 0);
+        if (remaining.length > 0) {
+          currentPathCoords = remaining.map((wp) => ({
+            x: Math.round(wp.x * 100) / 100,
+            z: Math.round(wp.z * 100) / 100
+          }));
+        }
+      }
+
+      return {
+        id: numId,
+        faction: (u.faction === 'ENEMY' ? 'ENEMY' : 'ALLIED') as 'ALLIED' | 'ENEMY',
+        type: u.unitType,
+        gridX: Math.round(u.group.position.x - 0.5),
+        gridZ: Math.round(u.group.position.z - 0.5),
+        hp: Math.round(u.hp),
+        maxHp: Math.round(u.maxHp),
+        educationLevel: u.educationLevel || 0,
+        specialization: u.eliteSpecialization || undefined,
+        carriedAmount: u.carrying || 0,
+        carriedType: u.carriedResourceType || undefined,
+        state: stateStr,
+        targetResourceId: targetResId,
+        targetResourceCoords: targetResCoords,
+        targetBuildingId: targetBldId,
+        targetBuildingCoords: targetBldCoords,
+        targetUnitId: targetUId,
+        currentPath: currentPathCoords
+      };
+    });
+
+  const metadata: SaveGameMetadata = {
+    version: '1.0.0',
+    saveName,
+    timestamp: Date.now(),
+    formattedDate,
+    mapSize: mapSize,
+    gameMode: currentMatchConfig.peacefulMode ? 'Pacífico' : 'Padrão (Invasão)'
+  };
+
+  return {
+    metadata,
+    matchConfig: { ...currentMatchConfig, mapSeed: currentMapSeed },
+    camera: {
+      targetX: cameraTarget.x,
+      targetZ: cameraTarget.z,
+      frustumSize: frustumSize
+    },
+    playerResources: { ...resources },
+    enemyResources: { ...enemyResources },
+    popCap: {
+      player: getPopulationCap(),
+      enemy: enemyPopCap
+    },
+    fogGrid: Array.from(fogGrid),
+    units: unitsData,
+    buildings: buildingsData,
+    resources: resourcesData
+  };
+}
+
+function createBuildingFromData(bData: BuildingSaveData): ConstructionBuilding | null {
+  const faction: UnitFaction = bData.faction === 'ENEMY' ? 'ENEMY' : 'PLAYER';
+  let b: ConstructionBuilding;
+
+  switch (bData.type) {
+    case 'BARRACKS':
+      b = createBarracksFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'ARCHERY_RANGE':
+      b = createArcheryRangeFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'TOWER':
+      b = createTowerFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'LUMBER_CAMP':
+      b = createLumberCampFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'MINING_CAMP':
+      b = createMiningCampFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'HOUSE':
+      b = createHouseFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'MILL':
+      b = createMillFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'FARM':
+      b = createFarmFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'SCHOOL':
+      b = createSchoolFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'COLLEGE':
+      b = createCollegeFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'WALL':
+      b = createWallFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'GATE':
+      b = createGateFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    default:
+      console.warn(`[SaveLoad] Tipo de estrutura desconhecido: ${bData.type}`);
+      return null;
+  }
+
+  b.progress = bData.progress;
+  if (bData.hp !== undefined) b.hp = bData.hp;
+  if (bData.maxHp !== undefined) b.maxHp = bData.maxHp;
+
+  if (bData.isCompleted) {
+    b.isCompleted = true;
+    b.siteGroup.visible = false;
+    b.progressGroup.visible = false;
+    b.finishedGroup.visible = true;
+    b.group.visible = true;
+    b.finishedGroup.scale.set(1, 1, 1);
+    if (b.type === 'WALL') {
+      try { updateWallConnections(b); } catch (_) {}
+    } else if (b.type === 'GATE') {
+      try {
+        rebuildWallNeighbors(b.gridX - 1, b.gridZ);
+        rebuildWallNeighbors(b.gridX + 2, b.gridZ);
+      } catch (_) {}
+    }
+  } else {
+    b.isCompleted = false;
+    b.siteGroup.visible = true;
+    b.progressGroup.visible = true;
+    b.finishedGroup.visible = false;
+    b.progressBarMesh.scale.x = Math.max(0.01, b.progress / 100);
+  }
+
+  if (b.type === 'FARM' && b.isCompleted) {
+    b.farmFood = bData.farmFood !== undefined ? bData.farmFood : 300;
+    b.maxFarmFood = 300;
+  }
+
+  if (bData.trainingQueue && bData.trainingQueue.length > 0) {
+    b.trainingQueue = bData.trainingQueue.map((item, idx) => ({
+      id: `queue_${Date.now()}_${idx}`,
+      unitType: item.unitType as 'SWORDSMAN' | 'ARCHER',
+      totalDuration: item.unitType === 'SWORDSMAN' ? currentMatchConfig.trainingTime : ARCHER_TRAIN_TIME_SEC
+    }));
+    b.trainingTimer = bData.trainingQueue[0]?.progressSec || 0;
+  }
+
+  return b;
+}
+
+export function deserializeAndLoadGame(save: FullSaveState): void {
+  if (!save || !save.metadata || !Array.isArray(save.units) || !Array.isArray(save.buildings)) {
+    throw new Error('Arquivo de save inválido ou dados corrompidos.');
+  }
+
+  // 1. Limpa seleção, modos de colocação, modais e banners de jogo
+  deselectAllUnits();
+  deselectBuilding();
+  deselectTownCenter();
+  if (isPlacementMode) exitPlacementMode();
+  isGameOver = false;
+  isGamePaused = false;
+  (window as any).isGamePaused = false;
+  const gameOverModal = document.getElementById('game-over-modal');
+  if (gameOverModal) gameOverModal.style.display = 'none';
+  const pauseBanner = document.getElementById('pause-indicator');
+  if (pauseBanner) {
+    pauseBanner.style.display = 'none';
+    pauseBanner.classList.add('hidden');
+  }
+
+  // 2. Remove e descarta (dispose) todas as unidades 3D existentes
+  for (const u of unitsList) {
+    if (u.group.parent) scene.remove(u.group);
+    u.group.traverse((c) => {
+      if (c instanceof THREE.Mesh) {
+        c.geometry?.dispose();
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        mats.forEach((m) => m?.dispose?.());
+      }
+    });
+  }
+  unitsList.length = 0;
+  activeDeathAnimations.length = 0;
+  activeSpawnAnimations.length = 0;
+
+  for (const p of activeParticles) {
+    if (p.mesh.parent) scene.remove(p.mesh);
+  }
+  activeParticles.length = 0;
+
+  for (const p of towerProjectiles) {
+    if (p.mesh.parent) scene.remove(p.mesh);
+  }
+  towerProjectiles.length = 0;
+
+  for (const p of archerProjectiles) {
+    if (p.mesh.parent) scene.remove(p.mesh);
+  }
+  archerProjectiles.length = 0;
+
+  // 3. Remove e descarta (dispose) todos os edifícios 3D existentes
+  for (const b of buildingsList) {
+    if (b.group.parent) scene.remove(b.group);
+    b.group.traverse((c) => {
+      if (c instanceof THREE.Mesh) {
+        c.geometry?.dispose();
+        const mats = Array.isArray(c.material) ? c.material : [c.material];
+        mats.forEach((m) => m?.dispose?.());
+      }
+    });
+  }
+  buildingsList.length = 0;
+  buildingsGridMap.clear();
+
+  // 4. Remove obstáculos (árvores, minas, arbustos, muralhas) e acampamento inimigo
+  clearMapObstacles();
+  disposeEnemyCamp();
+
+  // 5. Restaura tamanho do mapa e relevo caso sejam diferentes
+  const targetMapSize = save.metadata.mapSize || mapSize;
+  const targetSeed = save.matchConfig?.mapSeed ?? currentMapSeed;
+  if (targetMapSize !== mapSize || targetSeed !== currentMapSeed) {
+    currentMapSeed = targetSeed;
+    applyMapSize(targetMapSize, currentMapSeed);
+    pendingMapSize = targetMapSize;
+  } else {
+    gridOccupancy = createOccupancyGrid(GRID_SIZE);
+    evaluateCliffsAndPlateaus();
+  }
+
+  if (save.matchConfig) {
+    Object.assign(currentMatchConfig, save.matchConfig);
+  }
+  hasEnemyFaction = !currentMatchConfig.peacefulMode;
+
+  // 6. Restaura Town Center e Acampamento Inimigo
+  restoreTownCenter();
+  if (hasEnemyFaction) {
+    createEnemyCamp(enemyCampCoord.x, enemyCampCoord.z);
+  }
+
+  // 7. Recria fisicamente os nós de recursos vivos e os indexa por ID e coordenadas
+  const resourceMapById = new Map<number, any>();
+  const resourceMapByKey = new Map<number, any>();
+
+  if (Array.isArray(save.resources)) {
+    for (const res of save.resources) {
+      let createdRes: any = null;
+      if (res.type === 'TREE') {
+        const tree = createTree(res.gridX, res.gridZ);
+        tree.wood = res.remainingAmount;
+        createdRes = tree;
+      } else if (res.type === 'BERRY_BUSH') {
+        const bush = createBerryBush(res.gridX, res.gridZ);
+        bush.food = res.remainingAmount;
+        createdRes = bush;
+      } else if (res.type === 'STONE_MINE') {
+        const mine = createStoneMine(res.gridX, res.gridZ);
+        mine.stone = res.remainingAmount;
+        createdRes = mine;
+      } else if (res.type === 'GOLD_MINE') {
+        const mine = createGoldMine(res.gridX, res.gridZ);
+        mine.gold = res.remainingAmount;
+        createdRes = mine;
+      }
+      if (createdRes) {
+        resourceMapById.set(res.id, createdRes);
+        resourceMapByKey.set(cellKey(res.gridX, res.gridZ), createdRes);
+      }
+    }
+  }
+
+  function findResourceByIdOrCoords(id?: number, coords?: { x: number; z: number }): any {
+    if (id !== undefined && resourceMapById.has(id)) {
+      return resourceMapById.get(id);
+    }
+    if (coords) {
+      const k = cellKey(coords.x, coords.z);
+      if (resourceMapByKey.has(k)) {
+        return resourceMapByKey.get(k);
+      }
+      return treesMap.get(k) || berryBushesMap.get(k) || stoneMinesMap.get(k) || goldMinesMap.get(k) || null;
+    }
+    return null;
+  }
+
+  // 8. Recria fisicamente as estruturas e as indexa por ID e coordenadas
+  const restoredBuildings: ConstructionBuilding[] = [];
+  const buildingMapById = new Map<number, ConstructionBuilding>();
+  const buildingMapByKey = new Map<number, ConstructionBuilding>();
+
+  if (Array.isArray(save.buildings)) {
+    for (const bData of save.buildings) {
+      const b = createBuildingFromData(bData);
+      if (b) {
+        restoredBuildings.push(b);
+        buildingMapById.set(bData.id, b);
+        buildingMapByKey.set(cellKey(bData.gridX, bData.gridZ), b);
+      }
+    }
+  }
+
+  function findBuildingByIdOrCoords(id?: number, coords?: { x: number; z: number }): ConstructionBuilding | null {
+    if (id !== undefined && buildingMapById.has(id)) {
+      return buildingMapById.get(id)!;
+    }
+    if (coords) {
+      const k = cellKey(coords.x, coords.z);
+      if (buildingMapByKey.has(k)) {
+        return buildingMapByKey.get(k)!;
+      }
+      const found = buildingsList.find((item) => item.gridX === coords.x && item.gridZ === coords.z);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // Atualiza conexões visuais de muros restaurados
+  for (const b of restoredBuildings) {
+    if (b.type === 'WALL') {
+      try { updateWallConnections(b); } catch (_) {}
+    }
+  }
+
+  // 9. Recria fisicamente as unidades (Passo 1: Instanciação, HP, Educação e Itens)
+  const restoredUnitsMap = new Map<number, RTSUnit>();
+  if (Array.isArray(save.units)) {
+    for (const uData of save.units) {
+      const faction: UnitFaction = uData.faction === 'ENEMY' ? 'ENEMY' : 'PLAYER';
+      const unit = createUnit(uData.gridX, uData.gridZ, uData.type, faction);
+      unit.hp = uData.hp;
+      unit.maxHp = uData.maxHp;
+      unit.group.scale.setScalar(1);
+
+      // Restaura educação e itens visuais 3D
+      if (uData.educationLevel >= 1) {
+        unit.educationLevel = 1;
+        unit.carryCapacity = 20;
+        unit.canEnrollInCollege = true;
+        if (unit.backpackMesh) unit.backpackMesh.visible = true;
+      }
+      if (uData.educationLevel >= 2) {
+        unit.educationLevel = 2;
+        unit.eliteSpecialization = (uData.specialization as EliteCourse) || 'ARCHITECT';
+        unit.canEnrollInCollege = false;
+        if (unit.academicCapGroup) unit.academicCapGroup.visible = true;
+        if (unit.academicGownMesh) unit.academicGownMesh.visible = true;
+      }
+
+      // Restaura recursos carregados
+      if (uData.carriedType) {
+        unit.carriedResourceType = uData.carriedType as any;
+      }
+      if (uData.carriedAmount > 0 && uData.carriedType) {
+        unit.carrying = uData.carriedAmount;
+        unit.carryMesh.visible = true;
+        if (unit.woodCarryMesh) unit.woodCarryMesh.visible = (uData.carriedType === 'WOOD');
+        if (unit.berryCarryMesh) unit.berryCarryMesh.visible = (uData.carriedType === 'FOOD');
+        if (unit.stoneCarryMesh) unit.stoneCarryMesh.visible = (uData.carriedType === 'STONE');
+        if (unit.goldCarryMesh) unit.goldCarryMesh.visible = (uData.carriedType === 'GOLD');
+      }
+
+      restoredUnitsMap.set(uData.id, unit);
+    }
+  }
+
+  // Remove animações de spawn para as unidades carregadas ficarem instantaneamente visíveis
+  activeSpawnAnimations.length = 0;
+
+  // Restaura vínculos de estudantes matriculados
+  if (Array.isArray(save.buildings)) {
+    for (let i = 0; i < save.buildings.length; i++) {
+      const bData = save.buildings[i];
+      const b = restoredBuildings[i];
+      if (b && bData.enrolledStudentIds && bData.enrolledStudentIds.length > 0) {
+        b.enrolledStudents = [];
+        for (const studentId of bData.enrolledStudentIds) {
+          const studentUnit = restoredUnitsMap.get(studentId);
+          if (studentUnit) {
+            studentUnit.isGarrisoned = true;
+            studentUnit.group.visible = false;
+            studentUnit.state = 'STUDYING';
+            studentUnit.waypoints = [];
+            b.enrolledStudents.push({
+              unitId: studentUnit.id,
+              progressSec: 0,
+              chosenCourse: b.selectedCollegeCourse || 'ARCHITECT'
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 9.5 Restaura estado comportamental e ações ativas das unidades (Passo 2)
+  if (Array.isArray(save.units)) {
+    for (const uData of save.units) {
+      const unit = restoredUnitsMap.get(uData.id);
+      if (!unit || unit.isGarrisoned) continue;
+
+      const myPos = unit.group.position;
+
+      switch (uData.state) {
+        case 'GATHERING':
+        case 'MINING_GOLD':
+        case 'MOVING_TO_RESOURCE': {
+          const res = findResourceByIdOrCoords(uData.targetResourceId, uData.targetResourceCoords);
+          if (res) {
+            const resX = res.gridX + 0.5;
+            const resZ = res.gridZ + 0.5;
+            const dist = Math.hypot(myPos.x - resX, myPos.z - resZ);
+
+            if (res.wood !== undefined && res.wood > 0) {
+              if (uData.state === 'GATHERING' && dist <= 1.8) {
+                unit.targetTree = res;
+                unit.carriedResourceType = 'WOOD';
+                unit.state = 'GATHERING';
+                unit.waypoints = [];
+                unit.gatherTimer = 0;
+                faceTowards(unit, res.gridX + 0.5, res.gridZ + 0.5, 1.0);
+              } else {
+                commandGather(unit, res);
+              }
+            } else if (res.food !== undefined && res.food > 0) {
+              if (uData.state === 'GATHERING' && dist <= 1.8) {
+                unit.targetBerryBush = res;
+                unit.carriedResourceType = 'FOOD';
+                unit.state = 'GATHERING';
+                unit.waypoints = [];
+                unit.gatherTimer = 0;
+                faceTowards(unit, res.gridX + 0.5, res.gridZ + 0.5, 1.0);
+              } else {
+                commandForage(unit, res);
+              }
+            } else if (res.stone !== undefined && res.stone > 0) {
+              if (uData.state === 'GATHERING' && dist <= 1.8) {
+                unit.targetStoneMine = res;
+                unit.carriedResourceType = 'STONE';
+                unit.state = 'GATHERING';
+                unit.waypoints = [];
+                unit.gatherTimer = 0;
+                faceTowards(unit, res.gridX + 0.5, res.gridZ + 0.5, 1.0);
+              } else {
+                commandMine(unit, res);
+              }
+            } else if (res.gold !== undefined && res.gold > 0) {
+              if ((uData.state === 'MINING_GOLD' || uData.state === 'GATHERING') && dist <= 1.8) {
+                unit.targetGoldMine = res;
+                unit.carriedResourceType = 'GOLD';
+                unit.state = 'MINING_GOLD';
+                unit.waypoints = [];
+                unit.gatherTimer = 0;
+                faceTowards(unit, res.gridX + 0.5, res.gridZ + 0.5, 1.0);
+              } else {
+                commandMineGold(unit, res);
+              }
+            } else {
+              goIdle(unit);
+            }
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'FARMING': {
+          const farm = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+          if (farm && farm.type === 'FARM' && !farm.isDepleted) {
+            const dist = farm.worldCenter ? Math.hypot(myPos.x - farm.worldCenter.x, myPos.z - farm.worldCenter.z) : 999;
+            if (dist <= 3.2 && farm.isCompleted) {
+              farm.assignedFarmerId = unit.id;
+              unit.targetFarm = farm;
+              unit.carriedResourceType = 'FOOD';
+              unit.state = 'GATHERING';
+              unit.waypoints = [];
+              unit.gatherTimer = 0;
+              faceTowards(unit, farm.worldCenter.x, farm.worldCenter.z, 1.0);
+            } else {
+              commandFarm(unit, farm);
+            }
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'BUILDING':
+        case 'MOVING_TO_BUILD': {
+          const b = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+          if (b && !b.isCompleted && b.progress < 100) {
+            const bCenter = b.worldCenter;
+            const dist = bCenter ? Math.hypot(myPos.x - bCenter.x, myPos.z - bCenter.z) : 999;
+            const reach = (b.size === 1 ? 1.6 : (b.size === 3 ? 2.5 : 2.0));
+            if (uData.state === 'BUILDING' && dist <= reach) {
+              unit.targetBuilding = b;
+              unit.state = 'BUILDING';
+              unit.waypoints = [];
+              faceTowards(unit, bCenter.x, bCenter.z, 1.0);
+            } else {
+              commandBuild(unit, b);
+            }
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'REPAIRING':
+        case 'MOVING_TO_REPAIR': {
+          if (unit.unitType !== 'VILLAGER') {
+            goIdle(unit);
+            break;
+          }
+          const isTcTarget = (uData.targetBuildingCoords &&
+            uData.targetBuildingCoords.x >= tcCoord.minX && uData.targetBuildingCoords.x <= tcCoord.maxX &&
+            uData.targetBuildingCoords.z >= tcCoord.minZ && uData.targetBuildingCoords.z <= tcCoord.maxZ) ||
+            (!uData.targetBuildingId && isTownCenterDamaged());
+
+          if (isTcTarget && isTownCenterDamaged()) {
+            const dist = Math.hypot(myPos.x - TC_WORLD_CENTER.x, myPos.z - TC_WORLD_CENTER.z);
+            if (uData.state === 'REPAIRING' && dist <= 2.6) {
+              unit.targetStructure = 'TOWN_CENTER';
+              unit.targetBuilding = null;
+              unit.state = 'REPAIRING';
+              unit.waypoints = [];
+              faceTowards(unit, TC_WORLD_CENTER.x, TC_WORLD_CENTER.z, 1.0);
+            } else {
+              commandRepairTownCenter(unit);
+            }
+          } else {
+            const b = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+            if (b && b.isCompleted && (b.hp ?? 0) < (b.maxHp ?? 1)) {
+              const bCenter = b.worldCenter;
+              const dist = bCenter ? Math.hypot(myPos.x - bCenter.x, myPos.z - bCenter.z) : 999;
+              const reach = (b.size === 1 ? 1.6 : (b.size === 3 ? 2.5 : 2.0));
+              if (uData.state === 'REPAIRING' && dist <= reach) {
+                unit.targetBuilding = b;
+                unit.targetStructure = 'BUILDING';
+                unit.state = 'REPAIRING';
+                unit.waypoints = [];
+                faceTowards(unit, bCenter.x, bCenter.z, 1.0);
+              } else {
+                commandRepairBuilding(unit, b);
+              }
+            } else {
+              goIdle(unit);
+            }
+          }
+          break;
+        }
+
+        case 'RETURNING_TO_BASE':
+        case 'DEPOSITING': {
+          if (unit.carrying > 0 && unit.carriedResourceType) {
+            commandReturnToBase(unit);
+            // Salva o alvo de recurso de retorno para que volte ao trabalho após descarregar
+            const res = findResourceByIdOrCoords(uData.targetResourceId, uData.targetResourceCoords);
+            if (res) {
+              if (res.wood !== undefined) {
+                unit.targetTree = res;
+                unit.lastTreeCell = new THREE.Vector2(res.gridX, res.gridZ);
+              } else if (res.food !== undefined) {
+                unit.targetBerryBush = res;
+                unit.lastBerryCell = new THREE.Vector2(res.gridX, res.gridZ);
+              } else if (res.stone !== undefined) {
+                unit.targetStoneMine = res;
+                unit.lastStoneCell = new THREE.Vector2(res.gridX, res.gridZ);
+              } else if (res.gold !== undefined) {
+                unit.targetGoldMine = res;
+                unit.lastGoldCell = new THREE.Vector2(res.gridX, res.gridZ);
+              }
+            } else if (uData.targetBuildingId) {
+              const farm = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+              if (farm && farm.type === 'FARM') {
+                unit.targetFarm = farm;
+              }
+            }
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'CHASING':
+        case 'ATTACKING': {
+          const targetEnemy = uData.targetUnitId ? restoredUnitsMap.get(uData.targetUnitId) : null;
+          if (targetEnemy && !targetEnemy.isDying && targetEnemy.hp > 0) {
+            commandAttack(unit, targetEnemy);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'ATTACKING_STRUCTURE': {
+          const targetB = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+          if (targetB && !targetB.isDepleted && (targetB.hp === undefined || targetB.hp > 0)) {
+            commandAttackBuilding(unit, targetB);
+          } else if (uData.targetBuildingCoords && uData.targetBuildingCoords.x === enemyCampCoord.x && uData.targetBuildingCoords.z === enemyCampCoord.z) {
+            commandAttackTent(unit);
+          } else if (hasEnemyFaction) {
+            commandAttackTownCenter(unit);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'MOVING_TO_SCHOOL': {
+          const school = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+          if (school && school.type === 'SCHOOL' && school.isCompleted) {
+            commandEnrollInSchool(unit, school);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'MOVING_TO_COLLEGE': {
+          const college = findBuildingByIdOrCoords(uData.targetBuildingId, uData.targetBuildingCoords);
+          if (college && college.type === 'COLLEGE' && college.isCompleted) {
+            commandEnrollInCollege(unit, college);
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        case 'MOVING': {
+          if (uData.currentPath && uData.currentPath.length > 0) {
+            unit.waypoints = uData.currentPath.map((p) => new THREE.Vector3(p.x, getTerrainHeight(p.x, p.z), p.z));
+            unit.currentWaypointIndex = 0;
+            unit.state = 'MOVING';
+          } else {
+            goIdle(unit);
+          }
+          break;
+        }
+
+        default:
+          goIdle(unit);
+          break;
+      }
+    }
+  }
+
+  // 10. Restaura estoques de recursos no HUD e nos objetos globais
+  if (save.playerResources) {
+    resources.wood = save.playerResources.wood ?? resources.wood;
+    resources.food = save.playerResources.food ?? resources.food;
+    resources.gold = save.playerResources.gold ?? resources.gold;
+    resources.stone = save.playerResources.stone ?? resources.stone;
+  }
+  if (save.enemyResources) {
+    enemyResources.wood = save.enemyResources.wood ?? enemyResources.wood;
+    enemyResources.food = save.enemyResources.food ?? enemyResources.food;
+    enemyResources.gold = save.enemyResources.gold ?? enemyResources.gold;
+    enemyResources.stone = save.enemyResources.stone ?? enemyResources.stone;
+  }
+  if (save.popCap && typeof save.popCap.enemy === 'number') {
+    enemyPopCap = save.popCap.enemy;
+  }
+  updateResourceHUD(true);
+
+  // 11. Restaura névoa de guerra e minimapa
+  if (Array.isArray(save.fogGrid) && save.fogGrid.length > 0) {
+    for (let i = 0; i < save.fogGrid.length && i < fogGrid.length; i++) {
+      fogGrid[i] = save.fogGrid[i];
+    }
+    updateFogOfWar(true);
+  }
+  renderMinimap();
+  updateTelemetryUnitsCount();
+  updateTelemetrySelectionCount();
+  updateObjectiveHUD();
+
+  // 12. Reposiciona câmera
+  if (save.camera) {
+    cameraTarget.set(save.camera.targetX, 0, save.camera.targetZ);
+    targetDesired.set(save.camera.targetX, 0, save.camera.targetZ);
+    frustumSize = save.camera.frustumSize || 28;
+    targetFrustumSize = save.camera.frustumSize || 28;
+    updateCameraFrustum();
+    updateCameraTransform();
+  }
+
+  closeSaveLoadModal();
+}
+
+export function saveToSlot(slotKey: string, customName?: string): boolean {
+  try {
+    const slotLabel = slotKey === QUICK_SAVE_KEY
+      ? 'Quick Save'
+      : `Slot ${slotKey.slice(-1)}`;
+    const fullState = serializeGameState(customName || slotLabel);
+    const json = JSON.stringify(fullState);
+    localStorage.setItem(slotKey, json);
+
+    soundManager.buildingComplete();
+    showSaveToast(slotKey === QUICK_SAVE_KEY ? '⚡ Quick Save realizado [F5]!' : `💾 Partida salva com sucesso no ${slotLabel}!`);
+    refreshSaveLoadUI();
+    return true;
+  } catch (err) {
+    console.error('[SaveLoad] Erro ao salvar partida:', err);
+    showSaveToast('⚠️ Falha ao salvar a partida!', true);
+    return false;
+  }
+}
+
+export function loadFromSlot(slotKey: string): boolean {
+  try {
+    const json = localStorage.getItem(slotKey);
+    if (!json) {
+      showSaveToast('⚠️ Nenhum save encontrado neste slot!', true);
+      return false;
+    }
+    const state: FullSaveState = JSON.parse(json);
+    deserializeAndLoadGame(state);
+    soundManager.uiClick();
+    const slotLabel = slotKey === QUICK_SAVE_KEY ? 'Quick Save [F9]' : `Slot ${slotKey.slice(-1)}`;
+    showSaveToast(`📂 Partida carregada com sucesso do ${slotLabel}!`);
+    return true;
+  } catch (err) {
+    console.error('[SaveLoad] Erro ao carregar partida:', err);
+    showSaveToast('⚠️ Falha ao carregar a partida salva!', true);
+    return false;
+  }
+}
+
+export function deleteSlot(slotKey: string): void {
+  try {
+    localStorage.removeItem(slotKey);
+    soundManager.uiClick();
+    const slotLabel = slotKey === QUICK_SAVE_KEY ? 'Quick Save' : `Slot ${slotKey.slice(-1)}`;
+    showSaveToast(`🗑️ ${slotLabel} apagado.`);
+    refreshSaveLoadUI();
+  } catch (err) {
+    console.error('[SaveLoad] Erro ao deletar slot:', err);
+  }
+}
+
+export function exportSaveFile(slotKey?: string): void {
+  try {
+    let fullState: FullSaveState;
+    if (slotKey) {
+      const json = localStorage.getItem(slotKey);
+      if (json) {
+        fullState = JSON.parse(json);
+      } else {
+        fullState = serializeGameState('Export');
+      }
+    } else {
+      fullState = serializeGameState('Export');
+    }
+
+    const jsonString = JSON.stringify(fullState, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'domain_of_tiles_save.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    soundManager.uiClick();
+    showSaveToast('⬇️ Arquivo domain_of_tiles_save.json exportado com sucesso!');
+  } catch (err) {
+    console.error('[SaveLoad] Erro ao exportar save:', err);
+    showSaveToast('⚠️ Falha ao exportar arquivo de save!', true);
+  }
+}
+
+export async function importSaveFile(file: File): Promise<boolean> {
+  try {
+    const text = await file.text();
+    const state: FullSaveState = JSON.parse(text);
+    deserializeAndLoadGame(state);
+    soundManager.buildingComplete();
+    showSaveToast('📂 Partida importada e carregada com sucesso!');
+    return true;
+  } catch (err) {
+    console.error('[SaveLoad] Erro ao importar arquivo de save:', err);
+    showSaveToast('⚠️ Arquivo de save inválido ou incompatível!', true);
+    return false;
+  }
+}
+
+export function refreshSaveLoadUI(): void {
+  // Quick Save
+  const qsJson = localStorage.getItem(QUICK_SAVE_KEY);
+  const qsDateEl = document.getElementById('quicksave-date');
+  const qsSummaryEl = document.getElementById('quicksave-summary');
+  const qsLoadBtn = document.getElementById('btn-quicksave-load') as HTMLButtonElement | null;
+  const qsCard = document.getElementById('save-quick-card');
+
+  if (qsJson) {
+    try {
+      const qsState: FullSaveState = JSON.parse(qsJson);
+      if (qsDateEl) qsDateEl.textContent = qsState.metadata?.formattedDate || 'Salvo';
+      if (qsSummaryEl) {
+        const alliedUnits = (qsState.units || []).filter(u => u.faction === 'ALLIED');
+        const popMax = qsState.popCap?.player || 20;
+        qsSummaryEl.textContent = `Mapa ${qsState.metadata?.mapSize || 50}x${qsState.metadata?.mapSize || 50} • Pop: ${alliedUnits.length}/${popMax} • ${qsState.units?.length || 0} Unidades • ${qsState.buildings?.length || 0} Estruturas`;
+      }
+      if (qsLoadBtn) qsLoadBtn.disabled = false;
+      if (qsCard) qsCard.classList.add('has-save');
+    } catch (_) {
+      if (qsLoadBtn) qsLoadBtn.disabled = true;
+    }
+  } else {
+    if (qsDateEl) qsDateEl.textContent = 'Nenhum Quick Save registrado';
+    if (qsSummaryEl) qsSummaryEl.textContent = 'Pressione [F5] durante o jogo para salvar instantaneamente e [F9] para carregar.';
+    if (qsLoadBtn) qsLoadBtn.disabled = true;
+    if (qsCard) qsCard.classList.remove('has-save');
+  }
+
+  // Slots 1, 2, 3
+  const slotKeys = ['rts_save_slot_1', 'rts_save_slot_2', 'rts_save_slot_3'];
+  slotKeys.forEach((key, idx) => {
+    const slotNum = idx + 1;
+    const card = document.getElementById(`slot-card-${slotNum}`);
+    const statusEl = document.getElementById(`slot-${slotNum}-status`);
+    const dateEl = document.getElementById(`slot-${slotNum}-date`);
+    const summaryEl = document.getElementById(`slot-${slotNum}-summary`);
+    const loadBtn = card?.querySelector('.btn-slot-load') as HTMLButtonElement | null;
+    const deleteBtn = card?.querySelector('.btn-slot-delete') as HTMLButtonElement | null;
+
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      try {
+        const s: FullSaveState = JSON.parse(raw);
+        if (card) card.classList.add('has-save');
+        if (statusEl) {
+          statusEl.textContent = 'Salvo';
+          statusEl.classList.add('active-save');
+        }
+        if (dateEl) dateEl.textContent = s.metadata?.formattedDate || '—';
+        if (summaryEl) {
+          const allied = (s.units || []).filter(u => u.faction === 'ALLIED');
+          const villagers = allied.filter(u => u.type === 'VILLAGER').length;
+          const military = allied.filter(u => u.type !== 'VILLAGER').length;
+          const popMax = s.popCap?.player || 20;
+          summaryEl.textContent = `Mapa ${s.metadata?.mapSize || 50}x${s.metadata?.mapSize || 50} | Pop: ${allied.length}/${popMax} | ${villagers} Aldeões, ${military} Guerreiros | ${s.buildings?.length || 0} Edifícios`;
+        }
+        if (loadBtn) loadBtn.disabled = false;
+        if (deleteBtn) deleteBtn.disabled = false;
+      } catch (_) {
+        if (card) card.classList.remove('has-save');
+        if (statusEl) {
+          statusEl.textContent = 'Corrompido';
+          statusEl.classList.remove('active-save');
+        }
+        if (summaryEl) summaryEl.textContent = 'Arquivo corrompido ou incompatível.';
+        if (loadBtn) loadBtn.disabled = true;
+        if (deleteBtn) deleteBtn.disabled = false;
+      }
+    } else {
+      if (card) card.classList.remove('has-save');
+      if (statusEl) {
+        statusEl.textContent = 'Vazio';
+        statusEl.classList.remove('active-save');
+      }
+      if (dateEl) dateEl.textContent = '—';
+      if (summaryEl) summaryEl.textContent = 'Espaço livre para salvar uma nova partida.';
+      if (loadBtn) loadBtn.disabled = true;
+      if (deleteBtn) deleteBtn.disabled = true;
+    }
+  });
+}
+
+export function openSaveLoadModal(): void {
+  const modal = document.getElementById('save-load-modal');
+  if (!modal) return;
+  refreshSaveLoadUI();
+  modal.style.display = 'flex';
+  isSaveLoadModalOpen = true;
+  soundManager.uiClick();
+}
+
+export function closeSaveLoadModal(): void {
+  const modal = document.getElementById('save-load-modal');
+  if (!modal) return;
+  modal.style.display = 'none';
+  isSaveLoadModalOpen = false;
+}
+
+export function setupSaveLoadSystem(): void {
+  const btnToggle = document.getElementById('btn-toggle-save-load');
+  if (btnToggle) {
+    btnToggle.onclick = () => {
+      if (isSaveLoadModalOpen) closeSaveLoadModal();
+      else openSaveLoadModal();
+    };
+  }
+
+  const btnClose = document.getElementById('btn-close-save-load');
+  if (btnClose) {
+    btnClose.onclick = () => closeSaveLoadModal();
+  }
+
+  const backdrop = document.getElementById('save-load-backdrop');
+  if (backdrop) {
+    backdrop.onclick = () => closeSaveLoadModal();
+  }
+
+  const btnQsSave = document.getElementById('btn-quicksave-save');
+  if (btnQsSave) {
+    btnQsSave.onclick = () => saveToSlot(QUICK_SAVE_KEY, 'Quick Save');
+  }
+
+  const btnQsLoad = document.getElementById('btn-quicksave-load');
+  if (btnQsLoad) {
+    btnQsLoad.onclick = () => loadFromSlot(QUICK_SAVE_KEY);
+  }
+
+  const slotList = document.getElementById('save-slots-list');
+  if (slotList) {
+    slotList.onclick = (e) => {
+      const target = (e.target as HTMLElement).closest('button');
+      if (!target) return;
+      const action = target.getAttribute('data-action');
+      const slot = target.getAttribute('data-slot');
+      if (!action || !slot) return;
+
+      if (action === 'save') {
+        const slotNum = slot.slice(-1);
+        saveToSlot(slot, `Slot ${slotNum}`);
+      } else if (action === 'load') {
+        loadFromSlot(slot);
+      } else if (action === 'delete') {
+        deleteSlot(slot);
+      }
+    };
+  }
+
+  const btnExport = document.getElementById('btn-export-save-file');
+  if (btnExport) {
+    btnExport.onclick = () => exportSaveFile();
+  }
+
+  const btnImport = document.getElementById('btn-import-save-file');
+  const inputImport = document.getElementById('input-import-save') as HTMLInputElement | null;
+  if (btnImport && inputImport) {
+    btnImport.onclick = () => inputImport.click();
+    inputImport.onchange = () => {
+      if (inputImport.files && inputImport.files[0]) {
+        importSaveFile(inputImport.files[0]);
+        inputImport.value = '';
+      }
+    };
+  }
+
+  (window as any).rtsSaveSystem = {
+    serializeGameState,
+    deserializeAndLoadGame,
+    saveToSlot,
+    loadFromSlot,
+    deleteSlot,
+    exportSaveFile,
+    importSaveFile,
+    openSaveLoadModal,
+    closeSaveLoadModal,
+    refreshSaveLoadUI
+  };
+}
+
 // Inicializa a partida na ordem estrita antes do primeiro render loop
 setupInitialMatch(currentMapSeed);
 
 // Inicializa verificação de auto-update para Desktop Electron
 setupElectronAutoUpdate();
+
+// Inicializa o sistema de Salvamento e Carregamento
+setupSaveLoadSystem();
 
 animate();
 

@@ -39,6 +39,17 @@
 
           <button
             type="button"
+            id="btn-toggle-save-load"
+            class="btn-floating-trigger"
+            title="Salvar e Carregar Partida (Save & Load) [F5 / F9]"
+            aria-expanded="false"
+          >
+            <span class="trigger-icon">💾</span>
+            <span class="trigger-label">Salvar / Carregar</span>
+          </button>
+
+          <button
+            type="button"
             id="btn-toggle-audio-mute"
             class="btn-floating-trigger btn-mute-trigger"
             title="Alternar Áudio Procedural (Som / Mudo)"
@@ -541,6 +552,18 @@
           </div>
           <div class="queue-timer-label" id="tc-queue-timer-label" style="display: none;">0.0s / 4.0s</div>
         </div>
+        <div class="building-hp-box" id="tc-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="tc-hp-val">400 / 400 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="tc-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button id="btn-repair-tc" class="btn-repair" title="Despacha um aldeão ocioso próximo para reparar o Town Center">
+            <span>🔧</span> Reparar Estrutura
+          </button>
+        </div>
       </div>
 
       <!-- Barracks Production Panel (Active when Barracks is selected) -->
@@ -577,6 +600,18 @@
             <div class="queue-progress-fill" id="queue-progress-fill" style="width: 0%;"></div>
           </div>
           <div class="queue-timer-label" id="queue-timer-label" style="display: none;">0.0s / 5.0s</div>
+        </div>
+        <div class="building-hp-box" id="barracks-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="barracks-hp-val">300 / 300 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="barracks-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
+          </button>
         </div>
       </div>
 
@@ -615,6 +650,18 @@
           </div>
           <div class="queue-timer-label" id="archery-queue-timer-label" style="display: none;">0.0s / 14.0s</div>
         </div>
+        <div class="building-hp-box" id="archery-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="archery-hp-val">300 / 300 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="archery-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
+          </button>
+        </div>
       </div>
 
       <!-- Farm Panel (Active when Farm is selected) -->
@@ -648,6 +695,18 @@
             </div>
           </button>
         </div>
+        <div class="building-hp-box" id="farm-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="farm-hp-val">150 / 150 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="farm-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
+          </button>
+        </div>
       </div>
 
       <!-- Mill Panel (Active when Mill is selected) -->
@@ -665,6 +724,18 @@
             <span class="tip-icon">💡</span>
             <span class="tip-text">Posicione moinhos próximos às fazendas para otimizar os trajetos de entrega!</span>
           </div>
+        </div>
+        <div class="building-hp-box" id="mill-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="mill-hp-val">300 / 300 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="mill-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
+          </button>
         </div>
       </div>
 
@@ -715,6 +786,18 @@
           <button id="btn-eject-students" class="btn-eject-students disabled" title="Liberar todos os alunos matriculados">
             <span class="eject-icon">🚪</span>
             <span>Liberar Alunos (Ejetar)</span>
+          </button>
+        </div>
+        <div class="building-hp-box" id="school-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="school-hp-val">300 / 300 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="school-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
           </button>
         </div>
       </div>
@@ -779,6 +862,41 @@
           <button type="button" id="btn-eject-college-students" class="btn-eject-students disabled" title="Liberar todos os mestrandos matriculados">
             <span class="eject-icon">🚪</span>
             <span>Liberar Alunos (Ejetar)</span>
+          </button>
+        </div>
+        <div class="building-hp-box" id="college-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="college-hp-val">400 / 400 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="college-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
+          </button>
+        </div>
+      </div>
+
+      <!-- Generic Building Information & Repair Panel (Active for House, Tower, Wall, Gate, Lumber, Mining, etc.) -->
+      <div class="ui-overlay barracks-panel" id="building-hud-panel" style="display: none;">
+        <div class="barracks-panel-header">
+          <div class="barracks-title-wrap">
+            <span class="barracks-badge" id="bld-panel-badge">ESTRUTURA</span>
+            <span class="barracks-title" id="bld-panel-title">🏠 Casa</span>
+          </div>
+          <button id="btn-close-building" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+        <div class="building-hp-box" id="bld-hp-box">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="bld-hp-val">150 / 150 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="bld-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button id="btn-repair-generic" class="btn-repair" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
           </button>
         </div>
       </div>
@@ -1293,6 +1411,116 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Modal de Salvamento e Carregamento de Partida (Save & Load Game) -->
+      <div id="save-load-modal" class="save-load-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="save-load-title">
+        <div class="save-load-backdrop" id="save-load-backdrop"></div>
+        <div class="save-load-card">
+          <!-- Cabeçalho -->
+          <div class="save-load-header">
+            <div class="save-load-title-row">
+              <span class="save-load-icon">💾</span>
+              <div class="save-load-title-wrap">
+                <div class="save-load-title-line">
+                  <h2 id="save-load-title" class="save-load-title">Salvar e Carregar Partida</h2>
+                  <span class="badge-quick-hint">[F5] Quick Save • [F9] Quick Load</span>
+                </div>
+                <p class="save-load-desc">Gerencie seus arquivos de progresso locais, exporte ou restaure simulações salvas.</p>
+              </div>
+            </div>
+            <button type="button" id="btn-close-save-load" class="btn-close-modal" title="Fechar (Esc)">✕</button>
+          </div>
+
+          <!-- Quick Save Banner Card -->
+          <div class="save-quick-card" id="save-quick-card">
+            <div class="slot-info-col">
+              <div class="slot-title-row">
+                <span class="slot-badge quick-badge">⚡ Quick Save [F5]</span>
+                <span class="slot-date" id="quicksave-date">Nenhum Quick Save registrado</span>
+              </div>
+              <div class="slot-details" id="quicksave-summary">Pressione [F5] durante o jogo para salvar instantaneamente e [F9] para carregar.</div>
+            </div>
+            <div class="slot-actions-col">
+              <button type="button" class="btn-slot-action btn-slot-save" id="btn-quicksave-save" title="Salvar no Quick Save [F5]">💾 Salvar</button>
+              <button type="button" class="btn-slot-action btn-slot-load" id="btn-quicksave-load" title="Carregar Quick Save [F9]" disabled>📂 Carregar</button>
+            </div>
+          </div>
+
+          <!-- Lista dos 3 Slots de Salvamento -->
+          <div class="save-slots-list" id="save-slots-list">
+            <!-- Slot 1 -->
+            <div class="save-slot-card" id="slot-card-1" data-slot="rts_save_slot_1">
+              <div class="slot-main-content">
+                <div class="slot-header-line">
+                  <span class="slot-number-badge">Slot 1</span>
+                  <span class="slot-status-tag" id="slot-1-status">Vazio</span>
+                  <span class="slot-timestamp" id="slot-1-date">—</span>
+                </div>
+                <div class="slot-summary-text" id="slot-1-summary">Espaço livre para salvar uma nova partida.</div>
+              </div>
+              <div class="slot-actions-row">
+                <button type="button" class="btn-slot-action btn-slot-save" data-action="save" data-slot="rts_save_slot_1" title="Salvar neste Slot">💾 Salvar</button>
+                <button type="button" class="btn-slot-action btn-slot-load" data-action="load" data-slot="rts_save_slot_1" title="Carregar este Slot" disabled>📂 Carregar</button>
+                <button type="button" class="btn-slot-action btn-slot-delete" data-action="delete" data-slot="rts_save_slot_1" title="Apagar este Slot" disabled>🗑️</button>
+              </div>
+            </div>
+
+            <!-- Slot 2 -->
+            <div class="save-slot-card" id="slot-card-2" data-slot="rts_save_slot_2">
+              <div class="slot-main-content">
+                <div class="slot-header-line">
+                  <span class="slot-number-badge">Slot 2</span>
+                  <span class="slot-status-tag" id="slot-2-status">Vazio</span>
+                  <span class="slot-timestamp" id="slot-2-date">—</span>
+                </div>
+                <div class="slot-summary-text" id="slot-2-summary">Espaço livre para salvar uma nova partida.</div>
+              </div>
+              <div class="slot-actions-row">
+                <button type="button" class="btn-slot-action btn-slot-save" data-action="save" data-slot="rts_save_slot_2" title="Salvar neste Slot">💾 Salvar</button>
+                <button type="button" class="btn-slot-action btn-slot-load" data-action="load" data-slot="rts_save_slot_2" title="Carregar este Slot" disabled>📂 Carregar</button>
+                <button type="button" class="btn-slot-action btn-slot-delete" data-action="delete" data-slot="rts_save_slot_2" title="Apagar este Slot" disabled>🗑️</button>
+              </div>
+            </div>
+
+            <!-- Slot 3 -->
+            <div class="save-slot-card" id="slot-card-3" data-slot="rts_save_slot_3">
+              <div class="slot-main-content">
+                <div class="slot-header-line">
+                  <span class="slot-number-badge">Slot 3</span>
+                  <span class="slot-status-tag" id="slot-3-status">Vazio</span>
+                  <span class="slot-timestamp" id="slot-3-date">—</span>
+                </div>
+                <div class="slot-summary-text" id="slot-3-summary">Espaço livre para salvar uma nova partida.</div>
+              </div>
+              <div class="slot-actions-row">
+                <button type="button" class="btn-slot-action btn-slot-save" data-action="save" data-slot="rts_save_slot_3" title="Salvar neste Slot">💾 Salvar</button>
+                <button type="button" class="btn-slot-action btn-slot-load" data-action="load" data-slot="rts_save_slot_3" title="Carregar este Slot" disabled>📂 Carregar</button>
+                <button type="button" class="btn-slot-action btn-slot-delete" data-action="delete" data-slot="rts_save_slot_3" title="Apagar este Slot" disabled>🗑️</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rodapé com Exportar / Importar Arquivo -->
+          <div class="save-load-footer">
+            <div class="footer-hint">Formato compatível com compartilhamento externo (.json).</div>
+            <div class="footer-actions">
+              <button type="button" id="btn-export-save-file" class="btn-footer-secondary" title="Exportar partida atual para arquivo .json">
+                <span class="btn-icon">⬇️</span> Exportar Arquivo JSON
+              </button>
+              <button type="button" id="btn-import-save-file" class="btn-footer-primary" title="Importar arquivo de partida .json">
+                <span class="btn-icon">⬆️</span> Carregar de Arquivo
+              </button>
+              <input type="file" id="input-import-save" accept=".json,application/json" style="display: none;">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast de Notificação de Salvamento/Carregamento -->
+      <div id="save-toast" class="save-toast" role="status" aria-live="polite">
+        <span class="toast-icon" id="save-toast-icon">💾</span>
+        <span class="toast-message" id="save-toast-msg">Partida salva com sucesso!</span>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
