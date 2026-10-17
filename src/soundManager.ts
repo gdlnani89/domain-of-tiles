@@ -848,6 +848,10 @@ class SoundManager {
     this.swordClash();
   }
 
+  public playSwordHit(): void {
+    this.swordClash();
+  }
+
   public playAlertAttack(): void {
     this.alertAttack();
   }

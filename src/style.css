@@ -2746,7 +2746,7 @@ canvas {
 .match-config-modal {
   position: fixed;
   inset: 0;
-  z-index: 2000;
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3602,7 +3602,7 @@ canvas {
 .save-load-modal {
   position: fixed;
   inset: 0;
-  z-index: 9998;
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4080,5 +4080,293 @@ canvas {
   cursor: not-allowed;
   filter: grayscale(0.5);
   border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================================================
+   TELA INICIAL / MENU PRINCIPAL OFICIAL - DOMAIN OF TILES
+   ========================================================================== */
+
+#main-menu-overlay,
+#main-menu,
+.main-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  padding: 2.5rem;
+  box-sizing: border-box;
+
+  /* Imagem de Fundo com ancoragem no topo para não cortar o título */
+  background-image: url('/menu-bg.jpg');
+  background-size: cover;
+  background-position: center top; /* Garante que o topo com o logo "DOMAIN OF TILES" fique 100% visível */
+  background-repeat: no-repeat;
+  
+  /* Suavização e nitidez máxima */
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+
+  opacity: 1;
+  transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: auto;
+  user-select: none;
+}
+
+#main-menu-overlay.menu-hidden,
+#main-menu-overlay.menu-fade-out,
+#main-menu.menu-hidden,
+#main-menu.menu-fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.menu-actions-panel {
+  position: absolute;
+  bottom: 40px;
+  left: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 240px;
+  z-index: 10;
+}
+
+.menu-btn {
+  background: rgba(18, 18, 24, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1.5px solid #d97706;
+  border-radius: 8px;
+  color: #fef3c7;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  transition: all 0.2s ease;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.menu-btn .btn-menu-icon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+}
+
+.menu-btn:hover {
+  background: linear-gradient(135deg, #b45309, #d97706);
+  border-color: #fde68a;
+  color: #ffffff;
+  transform: translateX(6px);
+  box-shadow: 0 6px 20px rgba(217, 119, 6, 0.4);
+}
+
+.menu-btn:active {
+  transform: translateX(3px) scale(0.98);
+}
+
+.menu-btn.btn-menu-quit:hover {
+  background: linear-gradient(135deg, #991b1b, #dc2626);
+  border-color: #fca5a5;
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.4);
+}
+
+/* Rodapé com Versão e Créditos Discretos */
+.menu-footer {
+  position: absolute;
+  bottom: 24px;
+  right: 28px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.menu-footer-credits {
+  font-size: 12px;
+  color: rgba(254, 243, 199, 0.6);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  font-family: inherit;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 768px) {
+  .menu-actions-panel {
+    bottom: 24px;
+    left: 20px;
+    width: 200px;
+  }
+  .menu-footer {
+    bottom: 16px;
+    right: 16px;
+  }
+}
+
+/* Modal de Pausa no Jogo */
+.pause-menu-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.pause-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.pause-menu-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 360px;
+  background: rgba(15, 23, 42, 0.95);
+  border: 2px solid #78350f;
+  border-radius: 14px;
+  padding: 24px 20px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 30px rgba(120, 53, 15, 0.4), inset 0 1px 0 rgba(245, 158, 11, 0.3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  animation: pauseCardIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pauseCardIn {
+  from { opacity: 0; transform: scale(0.92) translateY(12px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.pause-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.pause-menu-icon {
+  font-size: 26px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+}
+
+.pause-menu-title-wrap {
+  text-align: left;
+}
+
+.pause-menu-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: #f1f5f9;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+}
+
+.pause-menu-subtitle {
+  margin: 2px 0 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.pause-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.btn-pause-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 16px;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #f1f5f9;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.btn-pause-action:hover {
+  background: rgba(51, 65, 85, 0.95);
+  border-color: #f59e0b;
+  color: #fef08a;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.25);
+}
+
+.btn-pause-action.btn-pause-primary {
+  background: linear-gradient(180deg, #b45309 0%, #78350f 100%);
+  border-color: #f59e0b;
+  color: #fffbeb;
+}
+
+.btn-pause-action.btn-pause-primary:hover {
+  background: linear-gradient(180deg, #d97706 0%, #92400e 100%);
+  border-color: #fef08a;
+}
+
+.btn-pause-action.btn-pause-danger:hover {
+  background: rgba(127, 29, 29, 0.85);
+  border-color: #ef4444;
+  color: #fee2e2;
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.3);
+}
+
+.pause-hint-text {
+  font-size: 11.5px;
+  color: #64748b;
+  margin: 0;
+}
+
+.pause-hint-text kbd {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  color: #cbd5e1;
+}
+
+/* In-Game HUD Container */
+#in-game-hud {
+  display: contents;
+}
+
+#in-game-hud.hidden {
+  display: none !important;
+}
+
+body.menu-mode #in-game-hud,
+body.menu-mode .ui-overlay,
+body.menu-mode #selection-box,
+body.menu-mode .edge-indicator {
+  display: none !important;
 }
 

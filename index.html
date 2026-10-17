@@ -12,8 +12,62 @@
       <!-- 3D WebGL Canvas Container -->
       <div id="canvas-container"></div>
 
-      <!-- RTS Drag-Box Green Selection Rect -->
-      <div id="selection-box"></div>
+      <!-- Tela Inicial / Menu Principal Oficial (Arte Ilustrada Oficial) -->
+      <div id="main-menu-overlay" class="main-menu-overlay main-menu" data-menu="main-menu">
+        <!-- Painel de Ações do Jogador (Canto Inferior Esquerdo) -->
+        <div class="menu-actions-panel" id="menu-actions-panel">
+          <button
+            type="button"
+            id="btn-menu-new-game"
+            class="menu-btn"
+            title="Iniciar uma nova partida"
+          >
+            <span class="btn-menu-icon">▶</span>
+            <span class="btn-menu-label">Novo Jogo</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-menu-load-game"
+            class="menu-btn"
+            title="Carregar uma partida salva"
+          >
+            <span class="btn-menu-icon">💾</span>
+            <span class="btn-menu-label">Carregar Partida</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-menu-settings"
+            class="menu-btn"
+            title="Ajustar som, atalhos e parâmetros da partida"
+          >
+            <span class="btn-menu-icon">⚙️</span>
+            <span class="btn-menu-label">Configurações</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-menu-quit"
+            class="menu-btn btn-menu-quit"
+            title="Sair do Jogo"
+            style="display: none;"
+          >
+            <span class="btn-menu-icon">🚪</span>
+            <span class="btn-menu-label">Sair</span>
+          </button>
+        </div>
+
+        <!-- Versão e Créditos Discretos -->
+        <div class="menu-footer">
+          <span class="menu-footer-credits">v1.0.0</span>
+        </div>
+      </div>
+
+      <!-- In-Game HUD Container (Oculto no Menu Principal) -->
+      <div id="in-game-hud" class="in-game-hud hidden" style="display: none;">
+        <!-- RTS Drag-Box Green Selection Rect -->
+        <div id="selection-box"></div>
 
       <!-- Edge Pan Visual Indicator Overlays -->
       <div id="edge-top" class="edge-indicator top"></div>
@@ -957,6 +1011,36 @@
           <canvas id="minimap-canvas" width="160" height="160"></canvas>
         </div>
       </div>
+    </div> <!-- Fim de #in-game-hud -->
+
+      <!-- Modal de Pausa no Jogo com Opção de Voltar ao Menu -->
+      <div id="pause-menu-modal" class="pause-menu-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="pause-menu-title">
+        <div class="pause-menu-backdrop" id="pause-menu-backdrop"></div>
+        <div class="pause-menu-card">
+          <div class="pause-menu-header">
+            <span class="pause-menu-icon">⏸️</span>
+            <div class="pause-menu-title-wrap">
+              <h2 id="pause-menu-title" class="pause-menu-title">Jogo Pausado</h2>
+              <p class="pause-menu-subtitle">Simulação temporariamente suspensa</p>
+            </div>
+          </div>
+          <div class="pause-menu-actions">
+            <button type="button" id="btn-pause-resume" class="btn-pause-action btn-pause-primary" title="Continuar a partida atual">
+              <span class="btn-icon">▶</span> Retomar Partida
+            </button>
+            <button type="button" id="btn-pause-save-load" class="btn-pause-action" title="Abrir gerenciador de salvamento e carregamento">
+              <span class="btn-icon">💾</span> Salvar / Carregar
+            </button>
+            <button type="button" id="btn-pause-settings" class="btn-pause-action" title="Ajustar configurações da partida">
+              <span class="btn-icon">⚙️</span> Configurações
+            </button>
+            <button type="button" id="btn-pause-main-menu" class="btn-pause-action btn-pause-danger" title="Sair da partida e voltar para a tela inicial">
+              <span class="btn-icon">🏰</span> Voltar ao Menu Principal
+            </button>
+          </div>
+          <p class="pause-hint-text">Pressione <kbd>Espaço</kbd> ou <kbd>Esc</kbd> para retomar</p>
+        </div>
+      </div>
 
       <!-- Game Over / Victory Modal -->
       <div id="game-over-modal" class="game-over-modal" style="display: none;">
@@ -1029,7 +1113,7 @@
       </div>
 
       <!-- Modal de Configuração Pré-Jogo (Partida Customizada / Sandbox) -->
-      <div id="match-config-modal" class="match-config-modal">
+      <div id="match-config-modal" class="match-config-modal" style="display: none;">
         <div class="match-config-backdrop"></div>
         <div class="match-config-card" id="match-config-card">
           <!-- Cabeçalho do Modal -->

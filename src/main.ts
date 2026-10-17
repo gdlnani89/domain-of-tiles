@@ -137,8 +137,11 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
 };
 
 export const currentMatchConfig: MatchConfig = { ...DEFAULT_MATCH_CONFIG };
-export let isMatchConfigModalOpen = true; // Inicia pausado com o modal de configuração pré-jogo
+export type GameState = 'MENU' | 'IN_GAME' | 'PAUSED';
+export let currentGameState: GameState = 'MENU';
+export let isMatchConfigModalOpen = false; // Inicia na Tela Inicial / Menu Principal Oficial
 export let isSaveLoadModalOpen = false;
+export let isPauseMenuModalOpen = false;
 export let hasMatchEverStarted = false;
 export let hasEnemyFaction = true;
 
@@ -8279,16 +8282,22 @@ export let isEnginePopoverOpen = false;
 export let isControlsPopoverOpen = false;
 
 // --- SISTEMA DE PAUSA E RETOMADA DA SIMULAÇÃO RTS ---
-export function toggleGamePause(): boolean {
-  if (isGameOver || isMatchConfigModalOpen) return isGamePaused;
+export function toggleGamePause(forceState?: boolean): boolean {
+  if (isGameOver || isMatchConfigModalOpen || currentGameState === 'MENU') return isGamePaused;
 
-  isGamePaused = !isGamePaused;
+  isGamePaused = forceState !== undefined ? forceState : !isGamePaused;
   const pIndicator = document.getElementById('pause-indicator');
-  if (pIndicator) {
-    if (isGamePaused) {
-      pIndicator.style.display = 'flex';
-      pIndicator.classList.remove('hidden');
-    } else {
+  const pauseModal = document.getElementById('pause-menu-modal');
+
+  if (isGamePaused) {
+    if (pauseModal) pauseModal.style.display = 'flex';
+    if (pIndicator) {
+      pIndicator.style.display = 'none';
+      pIndicator.classList.add('hidden');
+    }
+  } else {
+    if (pauseModal) pauseModal.style.display = 'none';
+    if (pIndicator) {
       pIndicator.style.display = 'none';
       pIndicator.classList.add('hidden');
     }
@@ -14515,7 +14524,7 @@ window.addEventListener('keydown', (e) => {
     toggleControlsPopover();
   }
 
-  // Tecla Esc: fecha balões popover, cancela modo de posicionamento, fecha painel do quartel ou desseleciona unidades
+  // Tecla Esc: fecha balões popover, cancela modo de posicionamento, fecha painel do quartel, desseleciona unidades ou abre/fecha menu de pausa
   if (e.key === 'Escape') {
     if (isEnginePopoverOpen || isControlsPopoverOpen) {
       closeEnginePopover();
@@ -14526,8 +14535,10 @@ window.addEventListener('keydown', (e) => {
       deselectBuilding();
     } else if (isTownCenterSelected) {
       deselectTownCenter();
-    } else {
+    } else if (unitsList.some((u) => u.isSelected)) {
       deselectAllUnits();
+    } else if (currentGameState === 'IN_GAME') {
+      toggleGamePause();
     }
   }
 });
@@ -16617,6 +16628,13 @@ export function applyAndStartMatchConfig(): void {
 
   updateObjectiveHUD();
   closeMatchConfigModal();
+  if (currentGameState === 'MENU') {
+    currentGameState = 'IN_GAME';
+    isGamePaused = false;
+    hasMatchEverStarted = true;
+    setUIMenuMode(false);
+    if (menuDuelGroup) menuDuelGroup.visible = false;
+  }
   if (!currentMatchConfig.revealWholeMap) {
     setupGameCamera(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z);
     updateFogOfWar(true);
@@ -17880,6 +17898,11 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
+
+  // Se estiver na Tela Inicial / Menu Principal, pausa o loop do Three.js (0% CPU/GPU)
+  if (currentGameState === 'MENU') {
+    return;
+  }
 
   const delta = Math.min(clock.getDelta(), 0.1);
   const now = performance.now();
@@ -19749,6 +19772,13 @@ export function deserializeAndLoadGame(save: FullSaveState): void {
   }
 
   closeSaveLoadModal();
+  if (currentGameState === 'MENU') {
+    currentGameState = 'IN_GAME';
+    isGamePaused = false;
+    hasMatchEverStarted = true;
+    setUIMenuMode(false);
+    if (menuDuelGroup) menuDuelGroup.visible = false;
+  }
 }
 
 export function saveToSlot(slotKey: string, customName?: string): boolean {
@@ -20030,6 +20060,193 @@ export function setupSaveLoadSystem(): void {
   };
 }
 
+// =============================================================================
+// 19. DIORAMA 3D DO MENU PRINCIPAL - DUELO ÉPICO DOS DOIS GUERREIROS
+// =============================================================================
+
+export const MENU_DIORAMA_POS = new THREE.Vector3(500, 0, 500);
+export let menuDuelGroup: THREE.Group | null = null;
+
+export function createMenuDuelScene(): THREE.Group {
+  // Desativado: o menu principal agora utiliza a arte ilustrada oficial (menu-background.jpg)
+  if (menuDuelGroup) return menuDuelGroup;
+  menuDuelGroup = new THREE.Group();
+  menuDuelGroup.visible = false;
+  return menuDuelGroup;
+}
+
+export function updateMenuDuelScene(_delta: number): void {
+  // Desativado: substituído por menu-background.jpg
+}
+
+// -----------------------------------------------------------------------------
+// TRANSIÇÃO DE ESTADOS DO JOGO (MENU -> IN-GAME -> MENU)
+// -----------------------------------------------------------------------------
+export function setUIMenuMode(isMenu: boolean): void {
+  const inGameHudEl = document.getElementById('in-game-hud');
+  const mainMenuOverlayEl = document.getElementById('main-menu-overlay');
+
+  if (isMenu) {
+    document.body.classList.add('menu-mode');
+    if (inGameHudEl) {
+      inGameHudEl.style.display = 'none';
+      inGameHudEl.classList.add('hidden');
+    }
+    if (mainMenuOverlayEl) {
+      mainMenuOverlayEl.style.display = 'flex';
+      mainMenuOverlayEl.classList.remove('menu-hidden');
+      mainMenuOverlayEl.classList.remove('menu-fade-out');
+    }
+  } else {
+    document.body.classList.remove('menu-mode');
+    if (inGameHudEl) {
+      inGameHudEl.style.display = '';
+      inGameHudEl.classList.remove('hidden');
+    }
+    if (mainMenuOverlayEl) {
+      mainMenuOverlayEl.classList.add('menu-hidden');
+      mainMenuOverlayEl.classList.add('menu-fade-out');
+      setTimeout(() => {
+        if (currentGameState !== 'MENU') {
+          mainMenuOverlayEl.style.display = 'none';
+        }
+      }, 600);
+    }
+  }
+}
+
+export function startNewGameFromMenu(): void {
+  try {
+    soundManager.ensureAudioContext();
+    soundManager.warTrumpetAlert();
+  } catch (_) {}
+
+  const menuOverlay = document.getElementById('main-menu-overlay');
+  menuOverlay?.classList.add('menu-hidden');
+  menuOverlay?.classList.add('menu-fade-out');
+
+  setTimeout(() => {
+    currentGameState = 'IN_GAME';
+    isGamePaused = false;
+    hasMatchEverStarted = true;
+    setUIMenuMode(false);
+    if (menuOverlay) menuOverlay.style.display = 'none';
+    if (menuDuelGroup) menuDuelGroup.visible = false;
+
+    const alliedBaseX = tcCoord.minX + 1.5;
+    const alliedBaseZ = tcCoord.minZ + 1.5;
+    setupGameCamera(alliedBaseX, alliedBaseZ);
+  }, 600);
+}
+
+export function returnToMainMenu(): void {
+  const pauseModal = document.getElementById('pause-menu-modal');
+  if (pauseModal) pauseModal.style.display = 'none';
+  const pIndicator = document.getElementById('pause-indicator');
+  if (pIndicator) {
+    pIndicator.style.display = 'none';
+    pIndicator.classList.add('hidden');
+  }
+
+  isGamePaused = true;
+  currentGameState = 'MENU';
+
+  setUIMenuMode(true);
+
+  try {
+    soundManager.uiClick();
+  } catch (_) {}
+}
+
+export function setupMainMenuUI(): void {
+  const btnNewGame = document.getElementById('btn-menu-new-game');
+  const btnLoadGame = document.getElementById('btn-menu-load-game');
+  const btnSettings = document.getElementById('btn-menu-settings');
+  const btnQuit = document.getElementById('btn-menu-quit');
+
+  // Efeito sonoro de hover nos botões de menu e pausa
+  const menuButtons = document.querySelectorAll('.menu-btn, .btn-menu-action, .btn-pause-action');
+  menuButtons.forEach((btn) => {
+    btn.addEventListener('mouseenter', () => {
+      try {
+        soundManager.uiClick();
+      } catch (_) {}
+    });
+  });
+
+  btnNewGame?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startNewGameFromMenu();
+  });
+
+  btnLoadGame?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    openSaveLoadModal();
+  });
+
+  btnSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    openMatchConfigModal();
+  });
+
+  // Mostra botão de Sair do Jogo se estiver rodando no Electron Desktop
+  const isElectron = Boolean(
+    window.electronUpdater ||
+    (window as any).api ||
+    navigator.userAgent.includes('Electron')
+  );
+  if (btnQuit && isElectron) {
+    btnQuit.style.display = 'flex';
+    btnQuit.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try {
+        soundManager.uiClick();
+      } catch (_) {}
+      try {
+        window.close();
+      } catch (_) {}
+    });
+  }
+
+  // Controles do Modal de Pausa
+  const btnPauseResume = document.getElementById('btn-pause-resume');
+  const btnPauseSaveLoad = document.getElementById('btn-pause-save-load');
+  const btnPauseSettings = document.getElementById('btn-pause-settings');
+  const btnPauseMainMenu = document.getElementById('btn-pause-main-menu');
+  const pauseBackdrop = document.getElementById('pause-menu-backdrop');
+
+  btnPauseResume?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleGamePause(false);
+  });
+
+  btnPauseSaveLoad?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSaveLoadModal();
+  });
+
+  btnPauseSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openMatchConfigModal();
+  });
+
+  btnPauseMainMenu?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    returnToMainMenu();
+  });
+
+  pauseBackdrop?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleGamePause(false);
+  });
+}
+
 // Inicializa a partida na ordem estrita antes do primeiro render loop
 setupInitialMatch(currentMapSeed);
 
@@ -20039,6 +20256,15 @@ setupElectronAutoUpdate();
 // Inicializa o sistema de Salvamento e Carregamento
 setupSaveLoadSystem();
 
+// Configura os botões da Tela Inicial e Menu de Pausa
+setupMainMenuUI();
+
+// Pre-posiciona a câmera sobre a base aliada para quando a partida iniciar
+const alliedBaseX = tcCoord.minX + 1.5;
+const alliedBaseZ = tcCoord.minZ + 1.5;
+setupGameCamera(alliedBaseX, alliedBaseZ);
+
+// Inicia no modo MENU (Overlay da arte ilustrada oficial ativa, Three.js pausado)
+setUIMenuMode(true);
+
 animate();
-
-
