@@ -4,9 +4,9 @@
  */
 
 class SoundManager {
-  private ctx: AudioContext | null = null;
-  private masterGain: GainNode | null = null;
-  private isMuted: boolean = false;
+  public ctx: AudioContext | null = null;
+  public masterGain: GainNode | null = null;
+  public isMuted: boolean = false;
   private noiseBuffer: AudioBuffer | null = null;
   private lastPlayTimes: Record<string, number> = {};
 
@@ -16,6 +16,8 @@ class SoundManager {
       const saved = localStorage.getItem('rts_sound_muted');
       if (saved !== null) {
         this.isMuted = saved === 'true';
+      } else {
+        this.isMuted = false;
       }
     } catch {
       this.isMuted = false;
@@ -25,22 +27,37 @@ class SoundManager {
   /**
    * Garante que o AudioContext seja instanciado e desbloqueado após o primeiro clique do usuário
    */
-  public initContext(): AudioContext | null {
+  public ensureAudioContext(): AudioContext | null {
     if (!this.ctx) {
       const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtxClass) return null;
       this.ctx = new AudioCtxClass();
 
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : 0.75, this.ctx.currentTime);
+      const currentVol = this.isMuted ? 0 : 0.75;
+      this.masterGain.gain.setValueAtTime(currentVol, this.ctx.currentTime);
+      this.masterGain.connect(this.ctx.destination);
+    } else if (!this.masterGain) {
+      this.masterGain = this.ctx.createGain();
+      const currentVol = this.isMuted ? 0 : 0.75;
+      this.masterGain.gain.setValueAtTime(currentVol, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     }
 
-    if (this.ctx.state === 'suspended') {
+    if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
 
+    // Garante que o ganho mestre esteja com volume audível se não estiver mutado
+    if (!this.isMuted && this.masterGain && this.masterGain.gain.value === 0) {
+      this.masterGain.gain.setValueAtTime(0.75, this.ctx.currentTime);
+    }
+
     return this.ctx;
+  }
+
+  public initContext(): AudioContext | null {
+    return this.ensureAudioContext();
   }
 
   public getIsMuted(): boolean {
@@ -61,7 +78,7 @@ class SoundManager {
 
     // Se estiver desmutando e o contexto ainda não iniciou, inicializa
     if (!this.isMuted) {
-      this.initContext();
+      this.ensureAudioContext();
       this.uiClick();
     }
 
@@ -103,8 +120,9 @@ class SoundManager {
    * uiClick: Bipe suave e nítido de alta frequência para cliques de botões
    */
   public uiClick(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('uiClick', 40)) return;
 
@@ -130,8 +148,9 @@ class SoundManager {
    * orderMove: Tom duplo metálico/tático para comando de marcha com botão direito
    */
   public orderMove(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('orderMove', 90)) return;
 
@@ -167,8 +186,9 @@ class SoundManager {
    * chopWood: Ruído percussivo curto (noise + lowpass filter) ritmado simulando machado na árvore
    */
   public chopWood(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('chopWood', 100)) return;
 
@@ -215,8 +235,9 @@ class SoundManager {
    * forageFood: Som suave e rústico de folhagem/arbusto sendo colhido
    */
   public forageFood(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('forageFood', 110)) return;
 
@@ -248,8 +269,9 @@ class SoundManager {
    * farmHarvest: Som suave de foice e palha colhendo trigo da fazenda
    */
   public farmHarvest(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('farmHarvest', 110)) return;
 
@@ -283,8 +305,9 @@ class SoundManager {
    * mineStone: Clique metálico seco de picareta contra rocha com ressonância alta
    */
   public mineStone(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('mineStone', 95)) return;
 
@@ -333,8 +356,9 @@ class SoundManager {
    * mineGold: Tilintar brilhante com harmônicos metálicos para o garimpo de ouro
    */
   public mineGold(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('mineGold', 90)) return;
 
@@ -366,8 +390,9 @@ class SoundManager {
    * swordClash: Rajada curta de ruído branco filtrado com tom descendente agudo para golpes de espada
    */
   public swordClash(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('swordClash', 80)) return;
 
@@ -415,8 +440,9 @@ class SoundManager {
    * buildingComplete: Acorde triádico triunfante em arpejo curto quando um edifício finaliza
    */
   public buildingComplete(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('buildingComplete', 300)) return;
 
@@ -453,8 +479,9 @@ class SoundManager {
    * updateNotification: Notificação sonora amigável para alertas de auto-update
    */
   public updateNotification(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     const t = ctx.currentTime;
     const notes = [587.33, 880.0]; // D5 -> A5
@@ -478,8 +505,9 @@ class SoundManager {
    * alertAttack: Toque de buzina de guerra ou sino grave quando tropas aliadas são atacadas
    */
   public alertAttack(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('alertAttack', 3500)) return;
 
@@ -529,8 +557,9 @@ class SoundManager {
    * popCappedAlert: Bip duplo grave de aviso quando a população atinge o limite
    */
   public popCappedAlert(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('popCappedAlert', 500)) return;
 
@@ -581,8 +610,9 @@ class SoundManager {
    * Disparado quando ondas inimigas de invasão marcham contra a base do jogador.
    */
   public warTrumpetAlert(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('warTrumpetAlert', 3000)) return;
 
@@ -669,8 +699,9 @@ class SoundManager {
    * bowShoot: Disparo de flecha balística com vibração de corda de arco (twang) e sibilo de ar (whoosh)
    */
   public bowShoot(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('bowShoot', 60)) return;
 
@@ -717,8 +748,9 @@ class SoundManager {
    * arrowHit: Impacto contundente da ponta da flecha no alvo
    */
   public arrowHit(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('arrowHit', 50)) return;
 
@@ -735,14 +767,18 @@ class SoundManager {
 
     osc.connect(oGain);
     oGain.connect(this.masterGain);
+
+    osc.start(t);
+    osc.stop(t + 0.08);
   }
 
   /**
    * hammer: Som de martelada/construção e reparo de estruturas
    */
   public hammer(): void {
+    this.ensureAudioContext();
     if (this.isMuted) return;
-    const ctx = this.initContext();
+    const ctx = this.ctx;
     if (!ctx || !this.masterGain) return;
     if (!this.throttle('hammer', 180)) return;
 
@@ -777,6 +813,51 @@ class SoundManager {
     thudGain.connect(this.masterGain);
     thud.start(t);
     thud.stop(t + 0.13);
+  }
+
+  // Métodos utilitários e aliases convenientes
+  public playWoodChop(): void {
+    this.chopWood();
+  }
+
+  public playHammer(): void {
+    this.hammer();
+  }
+
+  public playBowShoot(): void {
+    this.bowShoot();
+  }
+
+  public playArrowHit(): void {
+    this.arrowHit();
+  }
+
+  public playUiClick(): void {
+    this.uiClick();
+  }
+
+  public playOrderMove(): void {
+    this.orderMove();
+  }
+
+  public playBuildingComplete(): void {
+    this.buildingComplete();
+  }
+
+  public playSwordClash(): void {
+    this.swordClash();
+  }
+
+  public playAlertAttack(): void {
+    this.alertAttack();
+  }
+
+  public playWarTrumpetAlert(): void {
+    this.warTrumpetAlert();
+  }
+
+  public playPopCappedAlert(): void {
+    this.popCappedAlert();
   }
 }
 

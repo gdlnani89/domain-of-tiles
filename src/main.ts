@@ -753,6 +753,43 @@ export type FogState = typeof FogState[keyof typeof FogState];
 
 export let fogGrid = new Uint8Array(GRID_SIZE * GRID_SIZE);
 
+export function getFogStateAt(gx: number, gz: number): FogState {
+  if (!isCellInside(gx, gz)) return FogState.UNEXPLORED;
+  const ix = gx + HALF_GRID;
+  const iz = gz + HALF_GRID;
+  return (fogGrid[iz * GRID_SIZE + ix] ?? FogState.UNEXPLORED) as FogState;
+}
+
+export function isBuildingDiscovered(b: { gridX: number; gridZ: number; size: number; sizeX?: number; sizeZ?: number }): boolean {
+  if (currentMatchConfig.revealWholeMap) return true;
+  const sx = b.sizeX || b.size || 1;
+  const sz = b.sizeZ || b.size || 1;
+  for (let dx = 0; dx < sx; dx++) {
+    for (let dz = 0; dz < sz; dz++) {
+      const state = getFogStateAt(b.gridX + dx, b.gridZ + dz);
+      if (state === FogState.EXPLORED || state === FogState.VISIBLE) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function isBuildingDirectlyVisible(b: { gridX: number; gridZ: number; size: number; sizeX?: number; sizeZ?: number }): boolean {
+  if (currentMatchConfig.revealWholeMap) return true;
+  const sx = b.sizeX || b.size || 1;
+  const sz = b.sizeZ || b.size || 1;
+  for (let dx = 0; dx < sx; dx++) {
+    for (let dz = 0; dz < sz; dz++) {
+      const state = getFogStateAt(b.gridX + dx, b.gridZ + dz);
+      if (state === FogState.VISIBLE) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Textura Dinâmica de Névoa de Guerra (mapSize x mapSize com interpolação linear suave)
 const fogCanvas = document.createElement('canvas');
 const fogCtx = fogCanvas.getContext('2d', { willReadFrequently: true })!;
@@ -1121,6 +1158,13 @@ interface ParticleEffect {
 export const activeParticles: ParticleEffect[] = [];
 
 export function spawnParticles(pos: THREE.Vector3, count = 15, color = 0xf97316) {
+  if (!currentMatchConfig.revealWholeMap) {
+    const gx = Math.floor(pos.x);
+    const gz = Math.floor(pos.z);
+    if (isCellInside(gx, gz) && getFogStateAt(gx, gz) === FogState.UNEXPLORED) {
+      return;
+    }
+  }
   for (let i = 0; i < count; i++) {
     const size = 0.08 + Math.random() * 0.14;
     const geo = new THREE.BoxGeometry(size, size, size);
@@ -2277,6 +2321,7 @@ export interface ConstructionBuilding {
   isCompleted: boolean;
   progress: number; // 0 a 100%
   group: THREE.Group;
+  mesh?: THREE.Group;
   siteGroup: THREE.Group;
   finishedGroup: THREE.Group;
   progressBarMesh: THREE.Mesh;
@@ -2374,11 +2419,58 @@ export function getPopulationCap(): number {
     cap += BASE_TC_POPULATION;
   }
   for (const b of buildingsList) {
-    if (b.type === 'HOUSE' && b.isCompleted) {
+    if (
+      b.type === 'HOUSE' &&
+      (b.faction === 'PLAYER' || (b.faction as string) === 'ALLIED' || !b.isEnemy) &&
+      b.isCompleted &&
+      (b.hp === undefined || b.hp > 0)
+    ) {
       cap += HOUSE_POPULATION_BONUS;
     }
   }
   return Math.min(MAX_GLOBAL_POPULATION, cap);
+}
+
+export function getEnemyPopulationCap(): number {
+  let cap = BASE_TC_POPULATION;
+  for (const b of buildingsList) {
+    if (
+      b.type === 'HOUSE' &&
+      (b.faction === 'ENEMY' || b.isEnemy) &&
+      b.isCompleted &&
+      (b.hp === undefined || b.hp > 0)
+    ) {
+      cap += HOUSE_POPULATION_BONUS;
+    }
+  }
+  return Math.min(MAX_GLOBAL_POPULATION, cap);
+}
+
+export function recalculatePopCap(): { player: number; enemy: number } {
+  // Apenas Casas aliadas CONCLUÍDAS aumentam o limite do jogador:
+  const alliedHouses = buildingsList.filter(
+    (b) =>
+      b.type === 'HOUSE' &&
+      (b.faction === 'PLAYER' || (b.faction as string) === 'ALLIED' || !b.isEnemy) &&
+      b.isCompleted &&
+      (b.hp === undefined || b.hp > 0)
+  );
+  const playerCap = Math.min(
+    MAX_GLOBAL_POPULATION,
+    (!townCenterState.isDestroyed ? BASE_TC_POPULATION : 0) + alliedHouses.length * HOUSE_POPULATION_BONUS
+  );
+
+  const enemyHouses = buildingsList.filter(
+    (b) =>
+      b.type === 'HOUSE' &&
+      (b.faction === 'ENEMY' || b.isEnemy) &&
+      b.isCompleted &&
+      (b.hp === undefined || b.hp > 0)
+  );
+  enemyPopCap = Math.min(MAX_GLOBAL_POPULATION, BASE_TC_POPULATION + enemyHouses.length * HOUSE_POPULATION_BONUS);
+
+  updateTelemetryUnitsCount();
+  return { player: playerCap, enemy: enemyPopCap };
 }
 
 export function getCurrentPlayerPopulation(): number {
@@ -2388,7 +2480,11 @@ export function getCurrentPlayerPopulation(): number {
 export function getTotalQueuedPlayerUnits(): number {
   let queued = tcTrainingQueue.length;
   for (const b of buildingsList) {
-    if ((b.type === 'BARRACKS' || b.type === 'ARCHERY_RANGE') && b.isCompleted) {
+    if (
+      (b.type === 'BARRACKS' || b.type === 'ARCHERY_RANGE') &&
+      (b.faction === 'PLAYER' || (b.faction as string) === 'ALLIED' || !b.isEnemy) &&
+      b.isCompleted
+    ) {
       queued += b.trainingQueue.length;
     }
   }
@@ -2671,6 +2767,12 @@ function createBarracksFoundation(gridX: number, gridZ: number, faction: UnitFac
   group.add(finishedGroup);
   group.add(trainingProgressGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia as 4 células do grid (walkable = false)
@@ -2692,6 +2794,7 @@ function createBarracksFoundation(gridX: number, gridZ: number, faction: UnitFac
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -3076,6 +3179,12 @@ function createArcheryRangeFoundation(gridX: number, gridZ: number, faction: Uni
   group.add(finishedGroup);
   group.add(trainingProgressGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia as 4 células do grid (walkable = false)
@@ -3097,6 +3206,7 @@ function createArcheryRangeFoundation(gridX: number, gridZ: number, faction: Uni
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -3311,6 +3421,12 @@ function createTowerFoundation(gridX: number, gridZ: number, faction: UnitFactio
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 1 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
   setCellWalkable(gridX, gridZ, false);
 
@@ -3326,6 +3442,7 @@ function createTowerFoundation(gridX: number, gridZ: number, faction: UnitFactio
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -3683,6 +3800,12 @@ function createLumberCampFoundation(gridX: number, gridZ: number, faction: UnitF
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia as 4 células do grid
@@ -3704,6 +3827,7 @@ function createLumberCampFoundation(gridX: number, gridZ: number, faction: UnitF
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -4017,6 +4141,12 @@ function createMiningCampFoundation(gridX: number, gridZ: number, faction: UnitF
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia as 4 células do grid
@@ -4038,6 +4168,7 @@ function createMiningCampFoundation(gridX: number, gridZ: number, faction: UnitF
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -4304,6 +4435,12 @@ function createHouseFoundation(gridX: number, gridZ: number, faction: UnitFactio
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 1 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia 1 célula no grid
@@ -4321,6 +4458,7 @@ function createHouseFoundation(gridX: number, gridZ: number, faction: UnitFactio
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -4594,6 +4732,12 @@ function createMillFoundation(gridX: number, gridZ: number, faction: UnitFaction
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia 4 células (2x2) no grid
@@ -4615,6 +4759,7 @@ function createMillFoundation(gridX: number, gridZ: number, faction: UnitFaction
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -4825,6 +4970,12 @@ function createFarmFoundation(gridX: number, gridZ: number, faction: UnitFaction
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia 4 células (2x2) no grid
@@ -4846,6 +4997,7 @@ function createFarmFoundation(gridX: number, gridZ: number, faction: UnitFaction
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -5288,6 +5440,12 @@ function createSchoolFoundation(gridX: number, gridZ: number, faction: UnitFacti
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia 4 células (2x2) no grid
@@ -5309,6 +5467,7 @@ function createSchoolFoundation(gridX: number, gridZ: number, faction: UnitFacti
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -5545,6 +5704,12 @@ function createCollegeFoundation(gridX: number, gridZ: number, faction: UnitFact
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 3 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
 
   // Bloqueia 9 células (3x3) no grid
@@ -5566,6 +5731,7 @@ function createCollegeFoundation(gridX: number, gridZ: number, faction: UnitFact
     isCompleted: false,
     progress: 0,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -5918,6 +6084,12 @@ function createWallFoundation(gridX: number, gridZ: number, faction: UnitFaction
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 1 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
   setCellWalkable(gridX, gridZ, false);
 
@@ -5940,6 +6112,7 @@ function createWallFoundation(gridX: number, gridZ: number, faction: UnitFaction
     hp: maxHp,
     maxHp,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -6150,6 +6323,12 @@ function createGateFoundation(gridX: number, gridZ: number, faction: UnitFaction
   group.add(progressGroup);
   group.add(finishedGroup);
 
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 2, sizeX: 2, sizeZ: 1 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
   scene.add(group);
   setCellWalkable(gridX, gridZ, false);
   setCellWalkable(gridX + 1, gridZ, false);
@@ -6173,6 +6352,7 @@ function createGateFoundation(gridX: number, gridZ: number, faction: UnitFaction
     hp: maxHp,
     maxHp,
     group,
+    mesh: group,
     siteGroup,
     finishedGroup,
     progressBarMesh,
@@ -8251,8 +8431,24 @@ btnToggleAudioMute?.addEventListener('click', (e) => {
 });
 
 // Desbloqueia e inicializa o AudioContext no primeiro gesto do usuário
-window.addEventListener('pointerdown', () => soundManager.initContext(), { once: true });
-window.addEventListener('keydown', () => soundManager.initContext(), { once: true });
+const unlockAudio = () => {
+  soundManager.ensureAudioContext();
+  if (soundManager.ctx && soundManager.ctx.state === 'suspended') {
+    soundManager.ctx.resume().catch(() => {});
+  }
+  window.removeEventListener('pointerdown', unlockAudio, true);
+  window.removeEventListener('keydown', unlockAudio, true);
+  window.removeEventListener('click', unlockAudio, true);
+  document.removeEventListener('pointerdown', unlockAudio, true);
+  document.removeEventListener('keydown', unlockAudio, true);
+  document.removeEventListener('click', unlockAudio, true);
+};
+window.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
+window.addEventListener('keydown', unlockAudio, { once: true, capture: true });
+window.addEventListener('click', unlockAudio, { once: true, capture: true });
+document.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
+document.addEventListener('keydown', unlockAudio, { once: true, capture: true });
+document.addEventListener('click', unlockAudio, { once: true, capture: true });
 
 // Impede que cliques dentro dos balões propaguem para o canvas 3D
 engineSettingsPopoverEl?.addEventListener('pointerdown', (e) => {
@@ -9840,20 +10036,30 @@ function getTreeUnderCursor(clientX: number, clientY: number): TreeResource | nu
 
 function getBuildingUnderCursor(clientX: number, clientY: number): ConstructionBuilding | null {
   setPointerNDC(clientX, clientY);
-  const groups: THREE.Object3D[] = buildingsList.map((b) => b.group);
+  const groups: THREE.Object3D[] = buildingsList
+    .filter((b) => b.group.visible)
+    .map((b) => b.group);
   const hits = raycaster.intersectObjects(groups, true);
 
   if (hits.length > 0) {
     let obj: THREE.Object3D | null = hits[0].object;
     while (obj && !buildingsList.some((b) => b.group === obj)) obj = obj.parent;
     if (obj) {
-      return buildingsList.find((b) => b.group === obj) ?? null;
+      const b = buildingsList.find((b) => b.group === obj) ?? null;
+      if (b) {
+        if ((b.faction === 'ENEMY' || b.isEnemy) && !isBuildingDiscovered(b)) return null;
+        return b;
+      }
     }
   }
 
   const cell = raycastGridCell(clientX, clientY);
   if (cell && cell.isInside) {
-    return buildingsGridMap.get(cellKey(cell.gridX, cell.gridZ)) ?? null;
+    const b = buildingsGridMap.get(cellKey(cell.gridX, cell.gridZ)) ?? null;
+    if (b) {
+      if ((b.faction === 'ENEMY' || b.isEnemy) && !isBuildingDiscovered(b)) return null;
+      return b;
+    }
   }
   return null;
 }
@@ -10139,6 +10345,13 @@ function updateResourceHUD(bump = false) {
 }
 
 function spawnFloatingText(worldPos: THREE.Vector3, text: string, color?: string) {
+  if (!currentMatchConfig.revealWholeMap) {
+    const gx = Math.floor(worldPos.x);
+    const gz = Math.floor(worldPos.z);
+    if (isCellInside(gx, gz) && getFogStateAt(gx, gz) === FogState.UNEXPLORED) {
+      return;
+    }
+  }
   const p = worldPos.clone().project(camera);
   const el = document.createElement('div');
   el.className = 'float-text';
@@ -10186,6 +10399,9 @@ export interface RTSUnit {
   targetStructure: 'TENT' | 'TOWN_CENTER' | 'BUILDING' | null;
   lastPursuitTargetCell: THREE.Vector2 | null;
   group: THREE.Group;
+  mesh?: THREE.Group;
+  gridX?: number;
+  gridZ?: number;
   cylinderMesh: THREE.Mesh;
   selectionRing: THREE.Mesh;
   carryMesh: THREE.Group;
@@ -10194,6 +10410,7 @@ export interface RTSUnit {
   stoneCarryMesh: THREE.Group;
   goldCarryMesh: THREE.Group;
   hpBarGroup: THREE.Group;
+  hpBarMesh?: THREE.Group;
   hpBarFillMesh: THREE.Mesh;
   hpBarShowUntil: number;
   isSelected: boolean;
@@ -10253,7 +10470,8 @@ const DEPOSIT_TIME = 0.35;
 const TREE_SEARCH_RADIUS = 14;
 const BERRY_SEARCH_RADIUS = 14;
 
-const unitsList: RTSUnit[] = [];
+export const unitsList: RTSUnit[] = [];
+export const units: RTSUnit[] = unitsList;
 
 const unitCylinderGeo = new THREE.CylinderGeometry(0.3, 0.35, 0.8, 24);
 const unitEdgesGeo = new THREE.EdgesGeometry(unitCylinderGeo, 25);
@@ -10366,7 +10584,7 @@ function createUnitHpBar(faction: UnitFaction): { group: THREE.Group; fillMesh: 
   fill.position.z = 0.002;
   group.add(fill);
 
-  group.visible = faction === 'ENEMY';
+  group.visible = false;
   return { group, fillMesh: fill };
 }
 
@@ -10821,6 +11039,13 @@ function createUnit(
   const { group: hpBarGroup, fillMesh: hpBarFillMesh } = createUnitHpBar(faction);
   unitGroup.add(hpBarGroup);
 
+  if (faction === 'ENEMY') {
+    const inDirectVision = currentMatchConfig.revealWholeMap || (isCellInside(gridX, gridZ) && getFogStateAt(gridX, gridZ) === FogState.VISIBLE);
+    unitGroup.visible = inDirectVision;
+    hpBarGroup.visible = inDirectVision;
+    unitGroup.traverse((c: any) => { if (c.isMesh) c.castShadow = inDirectVision; });
+  }
+
   unitGroup.scale.setScalar(0.01);
   scene.add(unitGroup);
 
@@ -10839,6 +11064,9 @@ function createUnit(
     targetStructure: null,
     lastPursuitTargetCell: null,
     group: unitGroup,
+    mesh: unitGroup,
+    get gridX() { return unitGroup.position.x; },
+    get gridZ() { return unitGroup.position.z; },
     cylinderMesh: cylinder,
     selectionRing,
     carryMesh,
@@ -10847,6 +11075,7 @@ function createUnit(
     stoneCarryMesh,
     goldCarryMesh,
     hpBarGroup,
+    hpBarMesh: hpBarGroup,
     hpBarFillMesh,
     hpBarShowUntil: 0,
     isSelected: false,
@@ -12107,10 +12336,15 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
 
       if (building.progress >= 100) {
         building.isCompleted = true;
-        soundManager.buildingComplete();
+        const isAllied = building.faction === 'PLAYER' || (building.faction as string) === 'ALLIED' || !building.isEnemy;
+        if (isAllied) {
+          soundManager.buildingComplete();
+        }
         building.siteGroup.visible = false;
         building.progressGroup.visible = false;
-        building.finishedGroup.visible = true;
+        const isDiscovered = isAllied || isBuildingDiscovered(building);
+        building.finishedGroup.visible = isDiscovered;
+        building.group.visible = isDiscovered;
 
         if (building.type === 'WALL') {
           try {
@@ -12175,18 +12409,24 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
           building.type === 'SCHOOL' ? 'Escola da Vila' :
           building.type === 'COLLEGE' ? 'Real Faculdade' :
           'Quartel';
-        spawnFloatingText(building.worldCenter.clone().setY(2.2), label);
+        if (isAllied || isBuildingDirectlyVisible(building)) {
+          spawnFloatingText(building.worldCenter.clone().setY(2.2), label);
+        }
         console.log(`[RTS Construção] ${typeName} em (${building.gridX}, ${building.gridZ}) concluído com sucesso!`);
         gameStats.buildingsConstructedTotal++;
 
         if (building.type === 'HOUSE') {
-          if (building.faction === 'PLAYER') {
+          if (building.faction === 'PLAYER' || (building.faction as string) === 'ALLIED' || !building.isEnemy) {
             bumpElement(resPopEl);
             spawnFloatingText(building.worldCenter.clone().setY(2.6), '+5 População 👥', '#38bdf8');
-          } else {
-            enemyPopCap += 5;
-            spawnFloatingText(building.worldCenter.clone().setY(2.6), '+5 Pop Inimiga 👥', '#ef4444');
+            updateTelemetryUnitsCount();
+          } else if (building.faction === 'ENEMY' || building.isEnemy) {
+            enemyPopCap = Math.min(MAX_GLOBAL_POPULATION, enemyPopCap + 5);
+            if (currentMatchConfig.revealWholeMap || isBuildingDirectlyVisible(building)) {
+              spawnFloatingText(building.worldCenter.clone().setY(2.6), '+5 Pop Inimiga 👥', '#ef4444');
+            }
             console.log(`[RTS IA] Casa Inimiga concluída (+5 Pop Inimiga). Limite agora: ${enemyPopCap}`);
+            // Não toca no playerPopCap nem no HUD do jogador!
           }
         }
         if (building.type === 'SCHOOL' && selectedBuilding === building) {
@@ -12195,8 +12435,10 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         if (building.type === 'COLLEGE' && selectedBuilding === building) {
           updateCollegeHUD();
         }
-        updateTelemetryUnitsCount();
-        updateResourceHUD();
+        if (building.faction === 'PLAYER' || (building.faction as string) === 'ALLIED' || !building.isEnemy) {
+          updateTelemetryUnitsCount();
+          updateResourceHUD();
+        }
 
         if (building.type === 'TOWER') {
           updateFogOfWar(true);
@@ -12740,7 +12982,10 @@ function updateUnitHpBar(unit: RTSUnit, now: number) {
   if (unit.isDying) {
     unit.hpBarGroup.visible = false;
   } else if (unit.faction === 'ENEMY') {
-    unit.hpBarGroup.visible = true; // sempre visível para inimigos
+    const gx = Math.round(unit.gridX ?? unit.group.position.x);
+    const gz = Math.round(unit.gridZ ?? unit.group.position.z);
+    const inDirectVision = currentMatchConfig.revealWholeMap || (isCellInside(gx, gz) && getFogStateAt(gx, gz) === FogState.VISIBLE);
+    unit.hpBarGroup.visible = inDirectVision;
   } else {
     unit.hpBarGroup.visible =
       unit.hp < unit.maxHp ||
@@ -13307,7 +13552,7 @@ function isEnemyTentUnderCursor(clientX: number, clientY: number): boolean {
   if (!enemyCampState || enemyCampState.isTentDestroyed) return false;
   const isCampVisible = currentMatchConfig.revealWholeMap || (
     isCellInside(enemyCampCoord.x + 1, enemyCampCoord.z + 1) &&
-    fogGrid[(enemyCampCoord.z + 1 + HALF_GRID) * GRID_SIZE + (enemyCampCoord.x + 1 + HALF_GRID)] === FogState.VISIBLE
+    isBuildingDiscovered({ gridX: enemyCampCoord.x, gridZ: enemyCampCoord.z, size: enemyCampCoord.size })
   );
   if (!isCampVisible) return false;
 
@@ -13434,6 +13679,8 @@ function updateTelemetryUnitsCount() {
     resPopItem.title = `População: ${currentPop} / ${popCap} (Máximo Global: ${MAX_GLOBAL_POPULATION})`;
   }
 }
+
+export const updatePopulationHUD = updateTelemetryUnitsCount;
 
 function updateTelemetrySelectionCount() {
   if (isTelemetryPanelCollapsed()) return;
@@ -14759,7 +15006,7 @@ window.addEventListener('pointerup', (e) => {
       selectionBoxEl.style.display = 'none';
       setPointerNDC(e.clientX, e.clientY);
 
-      const selectableUnits = unitsList.filter((u) => !u.isGarrisoned && !u.isDying);
+      const selectableUnits = unitsList.filter((u) => !u.isGarrisoned && !u.isDying && (u.faction === 'PLAYER' || u.group.visible));
       const intersects = raycaster.intersectObjects(selectableUnits.map((u) => u.cylinderMesh), false);
       let clicked: RTSUnit | null = null;
 
@@ -14961,6 +15208,10 @@ export function createEnemyTownCenter(baseX: number, baseZ: number): TownCenterS
   scene.add(tcGroup);
   enemyCampGroup = tcGroup;
   enemyCampGroup.visible = currentMatchConfig.revealWholeMap;
+  if (!currentMatchConfig.revealWholeMap) {
+    enemyCampGroup.traverse((c: any) => { if (c.isMesh) c.castShadow = false; });
+    hpBar.group.visible = false;
+  }
 
   // Bloqueia as 9 células no grid (3x3, walkable = false)
   for (let dx = 0; dx < 3; dx++) {
@@ -15234,17 +15485,26 @@ export function destroyBuilding(building: ConstructionBuilding) {
   const idx = buildingsList.indexOf(building);
   if (idx !== -1) buildingsList.splice(idx, 1);
 
-  if (building.type === 'HOUSE' && building.faction === 'ENEMY') {
-    enemyPopCap = Math.max(5, enemyPopCap - 5);
+  if (building.type === 'HOUSE') {
+    if (building.faction === 'ENEMY' || building.isEnemy) {
+      enemyPopCap = Math.max(5, enemyPopCap - 5);
+      // Não toca no playerPopCap nem no HUD do jogador!
+    } else {
+      // Ao abater uma Casa aliada, desconta do limite populacional do jogador e atualiza o HUD
+      updateTelemetryUnitsCount();
+    }
   }
 
-  spawnParticles(building.worldCenter.clone().add(new THREE.Vector3(0, 1.0, 0)), 30, 0xef4444);
-  triggerCameraShake(0.4);
-  spawnFloatingText(
-    building.worldCenter.clone().add(new THREE.Vector3(0, 2.0, 0)),
-    `💥 ${building.type === 'BARRACKS' ? 'Quartel Inimigo' : 'Casa Inimiga'} Destruído!`,
-    '#f59e0b'
-  );
+  const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered(building);
+  if (isDiscovered) {
+    spawnParticles(building.worldCenter.clone().add(new THREE.Vector3(0, 1.0, 0)), 30, 0xef4444);
+    triggerCameraShake(0.4);
+    spawnFloatingText(
+      building.worldCenter.clone().add(new THREE.Vector3(0, 2.0, 0)),
+      `💥 ${building.type === 'BARRACKS' ? 'Quartel Inimigo' : 'Casa Inimiga'} Destruído!`,
+      '#f59e0b'
+    );
+  }
 
   for (const u of unitsList) {
     if (u.state === 'ATTACKING_STRUCTURE' && u.targetBuilding === building) {
@@ -16010,13 +16270,8 @@ export function restartGame(newMapSize: number = pendingMapSize, newSeed?: numbe
   spawnOrganicForests(currentMapSeed);
   spawnWildMineralAndFruitClusters(currentMapSeed);
 
-  // e. Reposiciona alvos de câmera focados no Town Center
-  cameraTarget.set(TC_WORLD_CENTER.x, 0, TC_WORLD_CENTER.z);
-  targetDesired.set(TC_WORLD_CENTER.x, 0, TC_WORLD_CENTER.z);
-  frustumSize = 28;
-  targetFrustumSize = 28;
-  updateCameraFrustum();
-  updateCameraTransform();
+  // e. Reposiciona alvos de câmera focados no Town Center aliado
+  setupGameCamera(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z);
 
   // f. Atualiza Névoa de Guerra
   if (currentMatchConfig.revealWholeMap) {
@@ -16315,6 +16570,12 @@ export function applyAndStartMatchConfig(): void {
         mine.gold = currentMatchConfig.goldCapacity;
         mine.maxGold = currentMatchConfig.goldCapacity;
       }
+
+      setupGameCamera(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z);
+      fogGrid.fill(FogState.UNEXPLORED);
+      updateFogOfWar(true);
+      updateEntitiesVisibility();
+      renderMinimap();
     }
   } else {
     if (currentMatchConfig.mapSize !== mapSize || currentMatchConfig.peacefulMode !== prevPeaceful) {
@@ -16356,6 +16617,12 @@ export function applyAndStartMatchConfig(): void {
 
   updateObjectiveHUD();
   closeMatchConfigModal();
+  if (!currentMatchConfig.revealWholeMap) {
+    setupGameCamera(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z);
+    updateFogOfWar(true);
+    updateEntitiesVisibility();
+    renderMinimap();
+  }
   console.log('[MatchConfig] Configurações aplicadas:', currentMatchConfig);
 }
 
@@ -16572,19 +16839,21 @@ export function updateFogOfWar(force: boolean = false): void {
   }
 
   // 2. Revela a visão a partir de todas as unidades e prédios aliados vivos
-  // Town Center (Raio 8)
+  // Town Center aliado (Raio 8)
   revealVisionCircle(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z, 8);
 
-  // Quartéis e Torres aliados (Raio 8 para quartel, Raio 10 para Torre de Vigia concluída)
+  // Quartéis, Torres e demais prédios exclusivamente ALIADOS
   for (const b of buildingsList) {
-    const radius = b.type === 'TOWER' && b.isCompleted ? TOWER_VISION_RADIUS : 8;
-    revealVisionCircle(b.gridX + b.size / 2, b.gridZ + b.size / 2, radius);
+    if ((b.faction === 'PLAYER' || (b.faction as string) === 'ALLIED' || !b.isEnemy) && !b.isDepleted) {
+      const radius = b.type === 'TOWER' && b.isCompleted ? TOWER_VISION_RADIUS : 8;
+      revealVisionCircle(b.gridX + b.size / 2, b.gridZ + b.size / 2, radius);
+    }
   }
 
-  // Unidades aliadas: Aldeão = 5 células, Espadachim = 6 células
+  // Unidades aliadas: Aldeão = 5 células, Soldados/Arqueiros = 6 células
   for (const u of unitsList) {
-    if (u.faction === 'PLAYER' && !u.isDying) {
-      const radius = u.unitType === 'SWORDSMAN' ? 6 : 5;
+    if ((u.faction === 'PLAYER' || (u.faction as string) === 'ALLIED' || !u.isEnemy) && !u.isDying) {
+      const radius = u.unitType === 'SWORDSMAN' || u.unitType === 'ARCHER' ? 6 : 5;
       revealVisionCircle(u.group.position.x, u.group.position.z, radius);
     }
   }
@@ -16595,7 +16864,7 @@ export function updateFogOfWar(force: boolean = false): void {
   // impedindo que o canvas fique completamente encoberto de preto.
   let playerLivingUnits = 0;
   for (const u of unitsList) {
-    if (u.faction === 'PLAYER' && !u.isDying) {
+    if ((u.faction === 'PLAYER' || (u.faction as string) === 'ALLIED' || !u.isEnemy) && !u.isDying) {
       playerLivingUnits++;
     }
   }
@@ -16633,66 +16902,205 @@ export function updateFogOfWar(force: boolean = false): void {
   fogCtx.putImageData(fogImageData, 0, 0);
   fogTexture.needsUpdate = true;
 
-  // 4. Atualiza a visibilidade 3D de Inimigos e Cenário
-  // Inimigos: mesh.visible e hpBar.visible = false se célula NÃO estiver VISIBLE
-  for (const u of unitsList) {
-    if (u.faction === 'ENEMY') {
-      const gx = Math.floor(u.group.position.x);
-      const gz = Math.floor(u.group.position.z);
-      const isVis = !u.isDying && isCellInside(gx, gz) && fogGrid[(gz + HALF_GRID) * GRID_SIZE + (gx + HALF_GRID)] === FogState.VISIBLE;
-      u.group.visible = isVis;
-      u.hpBarGroup.visible = isVis;
+  // 5. Atualiza a visibilidade 3D e sombras de entidades e cenário
+  updateEntitiesVisibility();
+}
+
+/**
+ * Atualiza rigorosamente a visibilidade 3D e projeção de sombras de todas as entidades:
+ * - Edifícios inimigos: visíveis apenas se a célula já foi explorada (EXPLORED ou VISIBLE).
+ * - Unidades inimigas: visíveis apenas sob visão direta (VISIBLE).
+ * - Objetos invisíveis têm castShadow desligado para evitar sombras fantasmas no chão.
+ */
+export function updateEntitiesVisibility(): void {
+  // Se o mapa estiver no modo "Revelar Mapa Completo", tudo fica visível
+  if (currentMatchConfig.revealWholeMap) {
+    for (const b of buildingsList) {
+      const bMesh = b.mesh ?? b.group;
+      if (bMesh) {
+        bMesh.visible = !b.isDepleted;
+        bMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = !b.isDepleted;
+        });
+      }
+      if (b.group && b.group !== bMesh) {
+        b.group.visible = !b.isDepleted;
+        b.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = !b.isDepleted;
+        });
+      }
+      if (b.hpBarGroup) {
+        b.hpBarGroup.visible = (b.hp ?? 0) < (b.maxHp ?? 1) && !b.isDepleted;
+      }
+    }
+    for (const u of unitsList) {
+      const uMesh = u.mesh ?? u.group;
+      if (uMesh) {
+        uMesh.visible = !u.isDying;
+        uMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = !u.isDying;
+        });
+      }
+      if (u.group && u.group !== uMesh) {
+        u.group.visible = !u.isDying;
+        u.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = !u.isDying;
+        });
+      }
+      if (u.hpBarMesh) u.hpBarMesh.visible = !u.isDying && u.hp < u.maxHp;
+      if (u.hpBarGroup && u.hpBarGroup !== u.hpBarMesh) u.hpBarGroup.visible = !u.isDying && u.hp < u.maxHp;
+    }
+    if (enemyCampGroup && enemyCampState) {
+      enemyCampGroup.visible = !enemyCampState.isTentDestroyed || !!enemyTownCenterState?.ruinsGroup;
+      enemyCampGroup.traverse((child: any) => {
+        if (child.isMesh) child.castShadow = !enemyCampState.isTentDestroyed || !!enemyTownCenterState?.ruinsGroup;
+      });
+      if (enemyTownCenterState?.hpBarGroup) {
+        enemyTownCenterState.hpBarGroup.visible = !enemyCampState.isTentDestroyed;
+      }
+      updateEnemyCampHpBar();
+    }
+    updateTownCenterHpBar();
+    treesMap.forEach((tree) => { tree.group.visible = true; });
+    berryBushesMap.forEach((bush) => { bush.group.visible = true; });
+    stoneMinesMap.forEach((mine) => { mine.group.visible = true; });
+    goldMinesMap.forEach((mine) => { mine.group.visible = true; });
+    wallsList.forEach((wall) => { wall.group.visible = true; });
+    return;
+  }
+
+  // 1. Edifícios Inimigos:
+  // Só ficam visíveis se a célula já tiver sido pelo menos EXPLORADA (EXPLORED ou VISIBLE)
+  for (const b of buildingsList) {
+    const bMesh = b.mesh ?? b.group;
+    if (b.faction === 'ENEMY' || b.isEnemy) {
+      const fogState = getFogStateAt(b.gridX, b.gridZ);
+      const isDiscovered = fogState === FogState.EXPLORED || fogState === FogState.VISIBLE || isBuildingDiscovered(b);
+      const inDirectVision = fogState === FogState.VISIBLE || isBuildingDirectlyVisible(b);
+      const isVisible = isDiscovered && !b.isDepleted;
+
+      if (bMesh) {
+        bMesh.visible = isVisible;
+        // Evita que projete sombras enquanto invisível:
+        bMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
+      }
+      if (b.group && b.group !== bMesh) {
+        b.group.visible = isVisible;
+        b.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
+      }
+
+      if (b.progressGroup) {
+        b.progressGroup.visible = isVisible && !b.isCompleted;
+      }
+      if (b.hpBarGroup) {
+        b.hpBarGroup.visible = inDirectVision && (b.hp ?? 0) < (b.maxHp ?? 1) && !b.isDepleted;
+      }
+    } else {
+      // Edifícios aliados são sempre visíveis para o jogador
+      const isVisible = !b.isDepleted;
+      if (bMesh) {
+        bMesh.visible = isVisible;
+        bMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
+      }
+      if (b.group && b.group !== bMesh) {
+        b.group.visible = isVisible;
+        b.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
+      }
+      if (b.hpBarGroup) {
+        b.hpBarGroup.visible = (b.hp ?? 0) < (b.maxHp ?? 1) && !b.isDepleted;
+      }
     }
   }
 
-  // Acampamento Inimigo
+  // 2. Town Center Inimigo (3x3):
   if (enemyCampGroup && enemyCampState) {
-    const isCampVis = isCellInside(enemyCampCoord.x, enemyCampCoord.z) &&
-      fogGrid[(enemyCampCoord.z + HALF_GRID) * GRID_SIZE + (enemyCampCoord.x + HALF_GRID)] === FogState.VISIBLE;
-    enemyCampGroup.visible = isCampVis;
+    const tcObj = { gridX: enemyCampCoord.x, gridZ: enemyCampCoord.z, size: enemyCampCoord.size };
+    const fogState = getFogStateAt(enemyCampCoord.x + 1, enemyCampCoord.z + 1);
+    const isDiscovered = fogState === FogState.EXPLORED || fogState === FogState.VISIBLE || isBuildingDiscovered(tcObj);
+    const inDirectVision = fogState === FogState.VISIBLE || isBuildingDirectlyVisible(tcObj);
+    const isVisible = isDiscovered && (!enemyCampState.isTentDestroyed || !!enemyTownCenterState?.ruinsGroup);
+
+    enemyCampGroup.visible = isVisible;
+    enemyCampGroup.traverse((child: any) => {
+      if (child.isMesh) child.castShadow = isVisible;
+    });
+
+    if (enemyTownCenterState?.hpBarGroup) {
+      enemyTownCenterState.hpBarGroup.visible = inDirectVision && !enemyCampState.isTentDestroyed;
+    }
     updateEnemyCampHpBar();
   }
   updateTownCenterHpBar();
 
-  // Árvores: visíveis se já exploradas (EXPLORED ou VISIBLE), ocultas se inexploradas
-  treesMap.forEach((tree) => {
-    const state = fogGrid[(tree.gridZ + HALF_GRID) * GRID_SIZE + (tree.gridX + HALF_GRID)];
-    tree.group.visible = state !== FogState.UNEXPLORED;
-  });
+  // 3. Unidades Inimigas (Aldeões e Soldados):
+  // Regra RTS clássica: Unidades móveis inimigas SÓ ficam visíveis se estiverem em linha de visão DIRETA (FogState.VISIBLE)!
+  // Se estiverem sob a névoa cinza (EXPLORED) ou no escuro (UNEXPLORED), ficam 100% INVISÍVEIS.
+  for (const u of unitsList) {
+    const uMesh = u.mesh ?? u.group;
+    if (u.faction === 'ENEMY' || u.isEnemy) {
+      const gx = Math.round(u.gridX ?? u.group.position.x);
+      const gz = Math.round(u.gridZ ?? u.group.position.z);
+      const fogState = getFogStateAt(gx, gz);
+      const inDirectVision = !u.isDying && fogState === FogState.VISIBLE;
 
-  // Arbustos de Frutas: visíveis se já explorados
-  berryBushesMap.forEach((bush) => {
-    const state = fogGrid[(bush.gridZ + HALF_GRID) * GRID_SIZE + (bush.gridX + HALF_GRID)];
-    bush.group.visible = state !== FogState.UNEXPLORED;
-  });
+      if (uMesh) {
+        uMesh.visible = inDirectVision;
+        uMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = inDirectVision;
+        });
+      }
+      if (u.group && u.group !== uMesh) {
+        u.group.visible = inDirectVision;
+        u.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = inDirectVision;
+        });
+      }
 
-  // Jazidas de Pedra: visíveis se já exploradas
-  stoneMinesMap.forEach((mine) => {
-    const state = fogGrid[(mine.gridZ + HALF_GRID) * GRID_SIZE + (mine.gridX + HALF_GRID)];
-    mine.group.visible = state !== FogState.UNEXPLORED;
-  });
-
-  // Minas de Ouro: visíveis se já exploradas
-  goldMinesMap.forEach((mine) => {
-    const state = fogGrid[(mine.gridZ + HALF_GRID) * GRID_SIZE + (mine.gridX + HALF_GRID)];
-    mine.group.visible = state !== FogState.UNEXPLORED;
-  });
-
-  // Paredes e Fortificações: visíveis se já exploradas (EXPLORED ou VISIBLE)
-  for (const wall of wallsList) {
-    const state = fogGrid[(wall.gridZ + HALF_GRID) * GRID_SIZE + (wall.gridX + HALF_GRID)];
-    wall.group.visible = state !== FogState.UNEXPLORED;
-  }
-  for (const b of buildingsList) {
-    if (b.type === 'WALL' || b.type === 'GATE') {
-      const state = fogGrid[(b.gridZ + HALF_GRID) * GRID_SIZE + (b.gridX + HALF_GRID)];
-      const isVisible = state !== FogState.UNEXPLORED;
-      b.group.visible = isVisible;
-      if (b.isCompleted) {
-        b.finishedGroup.visible = isVisible;
+      // Oculta também barra de vida flutuante se houver
+      if (u.hpBarMesh) u.hpBarMesh.visible = inDirectVision;
+      if (u.hpBarGroup && u.hpBarGroup !== u.hpBarMesh) u.hpBarGroup.visible = inDirectVision;
+    } else {
+      // Unidades aliadas são sempre visíveis
+      const isVisible = !u.isDying;
+      if (uMesh) {
+        uMesh.visible = isVisible;
+        uMesh.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
+      }
+      if (u.group && u.group !== uMesh) {
+        u.group.visible = isVisible;
+        u.group.traverse((child: any) => {
+          if (child.isMesh) child.castShadow = isVisible;
+        });
       }
     }
   }
+
+  // 4. Recursos e Cenário
+  treesMap.forEach((tree) => {
+    tree.group.visible = getFogStateAt(tree.gridX, tree.gridZ) !== FogState.UNEXPLORED;
+  });
+  berryBushesMap.forEach((bush) => {
+    bush.group.visible = getFogStateAt(bush.gridX, bush.gridZ) !== FogState.UNEXPLORED;
+  });
+  stoneMinesMap.forEach((mine) => {
+    mine.group.visible = getFogStateAt(mine.gridX, mine.gridZ) !== FogState.UNEXPLORED;
+  });
+  goldMinesMap.forEach((mine) => {
+    mine.group.visible = getFogStateAt(mine.gridX, mine.gridZ) !== FogState.UNEXPLORED;
+  });
+  wallsList.forEach((wall) => {
+    wall.group.visible = getFogStateAt(wall.gridX, wall.gridZ) !== FogState.UNEXPLORED;
+  });
 }
 
 // --- 19. MINIMAPA INTERATIVO EM CANVAS 2D (160x160) ---
@@ -16859,11 +17267,29 @@ export function renderMinimap(): void {
     minimapCtx.strokeRect(tcPx, tcPz, tcW, tcW);
   }
 
-  // Quartéis e Torres
+  // 4. Edifícios
   for (const b of buildingsList) {
+    if (b.isDepleted) continue;
+
     const bPx = Math.floor((b.gridX + HALF_GRID) * tilePx);
     const bPz = Math.floor((b.gridZ + HALF_GRID) * tilePx);
     const bW = Math.max(2, Math.ceil(b.size * tilePx));
+
+    // EDIFÍCIOS INIMIGOS: só aparecem no minimapa se já explorados (EXPLORED ou VISIBLE)
+    if (b.faction === 'ENEMY' || b.isEnemy) {
+      const fog = getFogStateAt(b.gridX, b.gridZ);
+      const isDiscovered = currentMatchConfig.revealWholeMap || fog === FogState.EXPLORED || fog === FogState.VISIBLE || isBuildingDiscovered(b);
+      if (isDiscovered) {
+        minimapCtx.fillStyle = '#dc2626';
+        minimapCtx.fillRect(bPx, bPz, bW, bW);
+        minimapCtx.strokeStyle = '#f87171';
+        minimapCtx.lineWidth = 1;
+        minimapCtx.strokeRect(bPx, bPz, bW, bW);
+      }
+      continue;
+    }
+
+    // EDIFÍCIOS ALIADOS:
     if (b.type === 'TOWER') {
       minimapCtx.fillStyle = '#f59e0b';
       minimapCtx.fillRect(bPx, bPz, bW, bW);
@@ -16893,11 +17319,6 @@ export function renderMinimap(): void {
       minimapCtx.fillStyle = b.isDepleted ? '#78350f' : '#eab308';
       minimapCtx.fillRect(bPx, bPz, bW, bW);
       minimapCtx.strokeStyle = b.isDepleted ? '#92400e' : '#fef08a';
-    } else if (b.faction === 'ENEMY') {
-      minimapCtx.fillStyle = '#dc2626';
-      minimapCtx.fillRect(bPx, bPz, bW, bW);
-      minimapCtx.strokeStyle = '#f87171';
-      minimapCtx.strokeRect(bPx, bPz, bW, bW);
     } else if (b.type === 'WALL') {
       minimapCtx.fillStyle = '#64748b';
       minimapCtx.fillRect(bPx, bPz, bW, bW);
@@ -16928,10 +17349,11 @@ export function renderMinimap(): void {
     }
   }
 
-  // 5. Edifícios Inimigos (Vermelhos): apenas se estiverem em células visíveis e tenda não destruída
+  // 5. Town Center Inimigo (Vermelho): só aparece no minimapa se a área foi explorada (EXPLORED ou VISIBLE)
   if (enemyCampState && !enemyCampState.isTentDestroyed && isCellInside(enemyCampCoord.x, enemyCampCoord.z)) {
-    const isCampVis = fogGrid[(enemyCampCoord.z + HALF_GRID) * GRID_SIZE + (enemyCampCoord.x + HALF_GRID)] === FogState.VISIBLE;
-    if (isCampVis) {
+    const fog = getFogStateAt(enemyCampCoord.x + 1, enemyCampCoord.z + 1);
+    const isCampDiscovered = currentMatchConfig.revealWholeMap || fog === FogState.EXPLORED || fog === FogState.VISIBLE || isBuildingDiscovered({ gridX: enemyCampCoord.x, gridZ: enemyCampCoord.z, size: enemyCampCoord.size });
+    if (isCampDiscovered) {
       const cPx = Math.floor((enemyCampCoord.x + HALF_GRID) * tilePx);
       const cPz = Math.floor((enemyCampCoord.z + HALF_GRID) * tilePx);
       const cW = Math.max(3, Math.ceil(enemyCampCoord.size * tilePx));
@@ -16946,7 +17368,7 @@ export function renderMinimap(): void {
   // 6. Pontos de Unidades
   // Unidades do jogador (azuis)
   for (const u of unitsList) {
-    if (u.faction === 'PLAYER' && !u.isDying) {
+    if ((u.faction === 'PLAYER' || (u.faction as string) === 'ALLIED' || !u.isEnemy) && !u.isDying) {
       const ux = (u.group.position.x + HALF_GRID) * tilePx;
       const uz = (u.group.position.z + HALF_GRID) * tilePx;
       minimapCtx.beginPath();
@@ -16959,12 +17381,13 @@ export function renderMinimap(): void {
     }
   }
 
-  // Unidades inimigas (pontos vermelhos - apenas se estiverem em células visíveis)
+  // Unidades inimigas (pontos vermelhos - apenas se estiverem em visão DIRETA / VISIBLE)
   for (const u of unitsList) {
-    if (u.faction === 'ENEMY' && !u.isDying) {
-      const gx = Math.floor(u.group.position.x);
-      const gz = Math.floor(u.group.position.z);
-      if (isCellInside(gx, gz) && fogGrid[(gz + HALF_GRID) * GRID_SIZE + (gx + HALF_GRID)] === FogState.VISIBLE) {
+    if ((u.faction === 'ENEMY' || u.isEnemy) && !u.isDying) {
+      const gx = Math.round(u.gridX ?? u.group.position.x);
+      const gz = Math.round(u.gridZ ?? u.group.position.z);
+      const fog = getFogStateAt(gx, gz);
+      if (currentMatchConfig.revealWholeMap || fog === FogState.VISIBLE) {
         const ux = (u.group.position.x + HALF_GRID) * tilePx;
         const uz = (u.group.position.z + HALF_GRID) * tilePx;
         minimapCtx.beginPath();
@@ -16981,32 +17404,40 @@ export function renderMinimap(): void {
   // 6.5 Efeito de Pulso de Alerta de Invasão no Minimapa
   const alertRemaining = invasionAlertEndTime - performance.now();
   if (alertRemaining > 0) {
+    const isCampDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX: enemyCampCoord.x, gridZ: enemyCampCoord.z, size: enemyCampCoord.size });
     const elapsed = 7500 - alertRemaining;
-    const campPx = (enemyCampCoord.x + 1 + HALF_GRID) * tilePx;
-    const campPz = (enemyCampCoord.z + 1 + HALF_GRID) * tilePx;
 
-    // Ondas concêntricas de radar de alerta (vermelho vivo)
-    for (let i = 0; i < 3; i++) {
-      const wavePhase = (elapsed * 0.035 + i * 12) % 36;
-      const waveAlpha = Math.max(0, 0.9 - wavePhase / 36);
-      minimapCtx.beginPath();
-      minimapCtx.arc(campPx, campPz, wavePhase, 0, Math.PI * 2);
-      minimapCtx.strokeStyle = `rgba(239, 68, 68, ${waveAlpha.toFixed(2)})`;
-      minimapCtx.lineWidth = 1.8;
-      minimapCtx.stroke();
+    // Só exibe radar do acampamento se já descoberto
+    if (isCampDiscovered) {
+      const campPx = (enemyCampCoord.x + 1 + HALF_GRID) * tilePx;
+      const campPz = (enemyCampCoord.z + 1 + HALF_GRID) * tilePx;
+
+      for (let i = 0; i < 3; i++) {
+        const wavePhase = (elapsed * 0.035 + i * 12) % 36;
+        const waveAlpha = Math.max(0, 0.9 - wavePhase / 36);
+        minimapCtx.beginPath();
+        minimapCtx.arc(campPx, campPz, wavePhase, 0, Math.PI * 2);
+        minimapCtx.strokeStyle = `rgba(239, 68, 68, ${waveAlpha.toFixed(2)})`;
+        minimapCtx.lineWidth = 1.8;
+        minimapCtx.stroke();
+      }
     }
 
-    // Marcadores pulsantes sobre soldados invasores em marcha
+    // Marcadores pulsantes sobre soldados invasores em marcha (apenas se em visão direta)
     for (const u of unitsList) {
-      if (u.faction === 'ENEMY' && u.isEnemyInvader && !u.isDying) {
-        const ux = (u.group.position.x + HALF_GRID) * tilePx;
-        const uz = (u.group.position.z + HALF_GRID) * tilePx;
-        const pSize = 4.0 + Math.sin(elapsed * 0.016) * 2.2;
-        minimapCtx.beginPath();
-        minimapCtx.arc(ux, uz, pSize, 0, Math.PI * 2);
-        minimapCtx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
-        minimapCtx.lineWidth = 1.6;
-        minimapCtx.stroke();
+      if ((u.faction === 'ENEMY' || u.isEnemy) && u.isEnemyInvader && !u.isDying) {
+        const gx = Math.round(u.group.position.x);
+        const gz = Math.round(u.group.position.z);
+        if (currentMatchConfig.revealWholeMap || getFogStateAt(gx, gz) === FogState.VISIBLE) {
+          const ux = (u.group.position.x + HALF_GRID) * tilePx;
+          const uz = (u.group.position.z + HALF_GRID) * tilePx;
+          const pSize = 4.0 + Math.sin(elapsed * 0.016) * 2.2;
+          minimapCtx.beginPath();
+          minimapCtx.arc(ux, uz, pSize, 0, Math.PI * 2);
+          minimapCtx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+          minimapCtx.lineWidth = 1.6;
+          minimapCtx.stroke();
+        }
       }
     }
   }
@@ -17508,6 +17939,7 @@ function animate() {
   if (isGameOver || isMatchConfigModalOpen) {
     updateBuildingOcclusionTransparency(delta);
     updateFogOfWar();
+    updateEntitiesVisibility();
     renderMinimap();
     renderer.render(scene, camera);
     return;
@@ -18063,9 +18495,10 @@ function animate() {
     if (telemetryTreesEl) telemetryTreesEl.textContent = `${treesMap.size}`;
   }
 
-  // 7. Névoa de Guerra (FoW), Transparência de Oclusão & Minimapa
+  // 7. Névoa de Guerra (FoW), Visibilidade de Entidades & Minimapa
   updateBuildingOcclusionTransparency(delta);
   updateFogOfWar();
+  updateEntitiesVisibility();
   renderMinimap();
 
   renderer.render(scene, camera);
@@ -18079,8 +18512,17 @@ window.addEventListener('resize', () => {
 });
 
 // =============================================================================
-// ORDEM ESTRITA DE INICIALIZAÇÃO DA PARTIDA (SAFE PROCEDURAL & INITIAL SPAWN)
+// CONTROLE DE CÂMERA E INICIALIZAÇÃO DA PARTIDA
 // =============================================================================
+export function setupGameCamera(targetX = TC_WORLD_CENTER.x, targetZ = TC_WORLD_CENTER.z): void {
+  cameraTarget.set(targetX, 0, targetZ);
+  targetDesired.set(targetX, 0, targetZ);
+  frustumSize = 28;
+  targetFrustumSize = 28;
+  updateCameraFrustum();
+  updateCameraTransform();
+}
+
 export function setupInitialMatch(seed: number = currentMapSeed): void {
   try {
     // a. Sorteie as coordenadas da base aliada (alliedBaseX, alliedBaseZ) e da base inimiga (enemyBaseX, enemyBaseZ).
@@ -18117,15 +18559,8 @@ export function setupInitialMatch(seed: number = currentMapSeed): void {
     spawnOrganicForests(seed);
     spawnWildMineralAndFruitClusters(seed);
 
-    // e. Reposicione os alvos de câmera:
-    //    - cameraTarget.set(alliedBaseX, 0, alliedBaseZ)
-    //    - controls.target (ou panTarget) focado no novo TC aliado.
-    cameraTarget.set(alliedBaseX, 0, alliedBaseZ);
-    targetDesired.set(alliedBaseX, 0, alliedBaseZ);
-    frustumSize = 28;
-    targetFrustumSize = 28;
-    updateCameraFrustum();
-    updateCameraTransform();
+    // e. Reposicione os alvos de câmera estritamente focados no Town Center aliado
+    setupGameCamera(alliedBaseX, alliedBaseZ);
 
     // f. Atualize a Névoa de Guerra (updateFogOfWar):
     if (currentMatchConfig.revealWholeMap) {
