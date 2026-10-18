@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="description" content="Protótipo RTS isométrico em Three.js: Town Center, coleta de madeira, pathfinding A* e seleção de unidades." />
     <title>Domain of Tiles - Isometric RTS Engine</title>
   </head>
@@ -44,6 +44,16 @@
           >
             <span class="btn-menu-icon">⚙️</span>
             <span class="btn-menu-label">Configurações</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-menu-fullscreen"
+            class="menu-btn btn-toggle-fullscreen"
+            title="Alternar Tela Cheia (F11)"
+          >
+            <span class="btn-menu-icon">⛶</span>
+            <span class="btn-menu-label">Tela Cheia</span>
           </button>
 
           <button
@@ -350,86 +360,94 @@
 
       <!-- Bottom Left Action Dock (Build Buttons + Controls Trigger & Popover) -->
       <div class="ui-overlay bottom-action-dock" id="bottom-action-dock">
+        <!-- Dock Category Tabs (Responsivo / Mobile) -->
+        <div class="dock-category-tabs" id="dock-category-tabs">
+          <button type="button" class="dock-tab-btn active" data-category="all" title="Todas as construções">🌟 Todas</button>
+          <button type="button" class="dock-tab-btn" data-category="civil" title="Construções Civis">🏠 Civis</button>
+          <button type="button" class="dock-tab-btn" data-category="military" title="Construções Militares">⚔️ Militares</button>
+          <button type="button" class="dock-tab-btn" data-category="education" title="Educação e Ciência">🎓 Educação</button>
+        </div>
+
         <!-- Build Buttons -->
         <div class="build-card" id="build-card">
-          <button id="btn-build-barracks" class="btn-build disabled" title="Construir Quartel (Atalho B) — Requer 50 Madeira">
+          <button id="btn-build-barracks" class="btn-build disabled" data-category="military" title="Construir Quartel (Atalho B) — Requer 50 Madeira">
             <span class="build-icon">⚔️</span>
             <div class="build-info">
               <span class="build-name">Quartel</span>
               <span class="build-cost"><span class="cost-wood">50 🪵</span> • [B]</span>
             </div>
           </button>
-          <button id="btn-build-archery" class="btn-build disabled" title="Construir Campo de Tiro com Arco (Atalho A) — Requer 100 Madeira + 50 Pedra">
+          <button id="btn-build-archery" class="btn-build disabled" data-category="military" title="Construir Campo de Tiro com Arco (Atalho A) — Requer 100 Madeira + 50 Pedra">
             <span class="build-icon">🏹</span>
             <div class="build-info">
               <span class="build-name">Tiro c/ Arco</span>
               <span class="build-cost"><span class="cost-wood">100 🪵</span> + <span class="cost-stone">50 🪨</span> • [A]</span>
             </div>
           </button>
-          <button id="btn-build-tower" class="btn-build btn-locked disabled" title="🔒 Requer um Arquiteto vivo formado na Faculdade!">
+          <button id="btn-build-tower" class="btn-build btn-locked disabled" data-category="military" title="🔒 Requer um Arquiteto vivo formado na Faculdade!">
             <span class="build-icon">🗼</span>
             <div class="build-info">
               <span class="build-name">Torre de Vigia <span class="lock-icon">🔒</span></span>
               <span class="build-cost"><span class="cost-stone">70 🪨</span> + <span class="cost-wood">30 🪵</span> • [W]</span>
             </div>
           </button>
-          <button id="btn-build-lumber" class="btn-build disabled" title="Construir Madeireira (Atalho L) — Requer 100 Madeira">
+          <button id="btn-build-lumber" class="btn-build disabled" data-category="civil" title="Construir Madeireira (Atalho L) — Requer 100 Madeira">
             <span class="build-icon">🪵</span>
             <div class="build-info">
               <span class="build-name">Madeireira</span>
               <span class="build-cost"><span class="cost-wood">100 🪵</span> • [L]</span>
             </div>
           </button>
-          <button id="btn-build-mining" class="btn-build disabled" title="Construir Campo de Mineração (Atalho M) — Requer 100 Madeira">
+          <button id="btn-build-mining" class="btn-build disabled" data-category="civil" title="Construir Campo de Mineração (Atalho M) — Requer 100 Madeira">
             <span class="build-icon">⛏️</span>
             <div class="build-info">
               <span class="build-name">Mina</span>
               <span class="build-cost"><span class="cost-wood">100 🪵</span> • [M]</span>
             </div>
           </button>
-          <button id="btn-build-house" class="btn-build disabled" title="Construir Casa (Atalho H) — Requer 30 Madeira (+5 População)">
+          <button id="btn-build-house" class="btn-build disabled" data-category="civil" title="Construir Casa (Atalho H) — Requer 30 Madeira (+5 População)">
             <span class="build-icon">🏠</span>
             <div class="build-info">
               <span class="build-name">Casa</span>
               <span class="build-cost"><span class="cost-wood">30 🪵</span> • [H]</span>
             </div>
           </button>
-          <button id="btn-build-mill" class="btn-build disabled" title="Construir Moinho (Atalho I) — Requer 70 Madeira (Depósito de Alimento)">
+          <button id="btn-build-mill" class="btn-build disabled" data-category="civil" title="Construir Moinho (Atalho I) — Requer 70 Madeira (Depósito de Alimento)">
             <span class="build-icon">🌾</span>
             <div class="build-info">
               <span class="build-name">Moinho</span>
               <span class="build-cost"><span class="cost-wood">70 🪵</span> • [I]</span>
             </div>
           </button>
-          <button id="btn-build-farm" class="btn-build btn-locked disabled" title="🔒 Requer um Agrônomo vivo formado na Faculdade!">
+          <button id="btn-build-farm" class="btn-build btn-locked disabled" data-category="civil" title="🔒 Requer um Agrônomo vivo formado na Faculdade!">
             <span class="build-icon">🚜</span>
             <div class="build-info">
               <span class="build-name">Fazenda <span class="lock-icon">🔒</span></span>
               <span class="build-cost"><span class="cost-wood">60 🪵</span> • [F]</span>
             </div>
           </button>
-          <button id="btn-build-school" class="btn-build disabled" title="Construir Escola (Atalho E) — Requer 80 Madeira + 40 Pedra (Especialização de Aldeões)">
+          <button id="btn-build-school" class="btn-build disabled" data-category="education" title="Construir Escola (Atalho E) — Requer 80 Madeira + 40 Pedra (Especialização de Aldeões)">
             <span class="build-icon">🏫</span>
             <div class="build-info">
               <span class="build-name">Escola</span>
               <span class="build-cost"><span class="cost-wood">80 🪵</span> + <span class="cost-stone">40 🪨</span> • [E]</span>
             </div>
           </button>
-          <button id="btn-build-college" class="btn-build disabled" title="Construir Faculdade (Atalho C) — Requer 150 Madeira + 120 Pedra + 80 Ouro (Especializações de Elite)">
+          <button id="btn-build-college" class="btn-build disabled" data-category="education" title="Construir Faculdade (Atalho C) — Requer 150 Madeira + 120 Pedra + 80 Ouro (Especializações de Elite)">
             <span class="build-icon">🏛️</span>
             <div class="build-info">
               <span class="build-name">Faculdade</span>
               <span class="build-cost"><span class="cost-wood">150 🪵</span> + <span class="cost-stone">120 🪨</span> + <span class="cost-gold">80 🪙</span> • [C]</span>
             </div>
           </button>
-          <button id="btn-build-wall" class="btn-build btn-locked disabled" title="Requer um Arquiteto vivo formado na Faculdade!">
+          <button id="btn-build-wall" class="btn-build btn-locked disabled" data-category="military" title="Requer um Arquiteto vivo formado na Faculdade!">
             <span class="build-icon">🧱</span>
             <div class="build-info">
               <span class="build-name">Muralha <span class="lock-icon">🔒</span></span>
               <span class="build-cost"><span class="cost-stone">5 🪨</span> • [P]</span>
             </div>
           </button>
-          <button id="btn-build-gate" class="btn-build btn-locked disabled" title="Requer um Arquiteto vivo formado na Faculdade!">
+          <button id="btn-build-gate" class="btn-build btn-locked disabled" data-category="military" title="Requer um Arquiteto vivo formado na Faculdade!">
             <span class="build-icon">🚪</span>
             <div class="build-info">
               <span class="build-name">Portão <span class="lock-icon">🔒</span></span>
@@ -618,6 +636,14 @@
             <span>🔧</span> Reparar Estrutura
           </button>
         </div>
+        <div class="rally-point-box" id="tc-rally-box">
+          <div class="rally-point-info">
+            <span class="rally-point-label" id="tc-rally-status">🚩 Padrão (Porta)</span>
+          </div>
+          <button type="button" class="btn-clear-rally" id="btn-clear-tc-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
+            ✕ Limpar Ponto
+          </button>
+        </div>
       </div>
 
       <!-- Barracks Production Panel (Active when Barracks is selected) -->
@@ -667,6 +693,14 @@
             <span>🔧</span> Reparar Estrutura
           </button>
         </div>
+        <div class="rally-point-box" id="barracks-rally-box">
+          <div class="rally-point-info">
+            <span class="rally-point-label" id="barracks-rally-status">🚩 Padrão (Porta)</span>
+          </div>
+          <button type="button" class="btn-clear-rally" id="btn-clear-barracks-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
+            ✕ Limpar Ponto
+          </button>
+        </div>
       </div>
 
       <!-- Archery Range Panel (Active when Archery Range is selected) -->
@@ -714,6 +748,14 @@
           </div>
           <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
             <span>🔧</span> Reparar Estrutura
+          </button>
+        </div>
+        <div class="rally-point-box" id="archery-rally-box">
+          <div class="rally-point-info">
+            <span class="rally-point-label" id="archery-rally-status">🚩 Padrão (Porta)</span>
+          </div>
+          <button type="button" class="btn-clear-rally" id="btn-clear-archery-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
+            ✕ Limpar Ponto
           </button>
         </div>
       </div>
@@ -854,6 +896,14 @@
             <span>🔧</span> Reparar Estrutura
           </button>
         </div>
+        <div class="rally-point-box" id="school-rally-box">
+          <div class="rally-point-info">
+            <span class="rally-point-label" id="school-rally-status">🚩 Padrão (Porta)</span>
+          </div>
+          <button type="button" class="btn-clear-rally" id="btn-clear-school-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
+            ✕ Limpar Ponto
+          </button>
+        </div>
       </div>
 
       <!-- College & University Panel (Active when College is selected) -->
@@ -930,6 +980,14 @@
             <span>🔧</span> Reparar Estrutura
           </button>
         </div>
+        <div class="rally-point-box" id="college-rally-box">
+          <div class="rally-point-info">
+            <span class="rally-point-label" id="college-rally-status">🚩 Padrão (Porta)</span>
+          </div>
+          <button type="button" class="btn-clear-rally" id="btn-clear-college-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
+            ✕ Limpar Ponto
+          </button>
+        </div>
       </div>
 
       <!-- Generic Building Information & Repair Panel (Active for House, Tower, Wall, Gate, Lumber, Mining, etc.) -->
@@ -997,6 +1055,20 @@
         </div>
       </div>
 
+      <!-- Mobile Tactical Floating Controls (Bottom Right, above Minimap) -->
+      <div class="mobile-tactical-controls" id="mobile-tactical-controls">
+        <button type="button" id="btn-mobile-action-mode" class="btn-mobile-action-mode" title="Alternar Modo de Toque (Selecionar vs Ordem Direta)">
+          <span class="mode-icon">👆</span>
+          <span class="mode-text">Selecionar / Mover</span>
+        </button>
+        <button type="button" id="btn-toggle-fullscreen" class="btn-hud-fullscreen btn-toggle-fullscreen" title="Alternar Tela Cheia">
+          <span class="fullscreen-icon">⛶</span>
+        </button>
+        <button type="button" id="btn-toggle-minimap-mobile" class="btn-toggle-minimap-mobile" title="Alternar Minimapa">
+          <span class="minimap-toggle-icon">🗺️</span>
+        </button>
+      </div>
+
       <!-- Interactive Minimap Card (Bottom Right) -->
       <div class="ui-overlay minimap-card" id="minimap-container">
         <div class="minimap-header">
@@ -1005,7 +1077,10 @@
             <span class="minimap-title">Minimapa</span>
             <span class="minimap-size-tag" id="minimap-size">50×50</span>
           </div>
-          <span class="minimap-coords" id="minimap-coords">[0, 0]</span>
+          <div class="minimap-header-right">
+            <span class="minimap-coords" id="minimap-coords">[0, 0]</span>
+            <button type="button" id="btn-collapse-minimap" class="btn-collapse-minimap" title="Recolher Minimapa">✕</button>
+          </div>
         </div>
         <div class="minimap-frame">
           <canvas id="minimap-canvas" width="160" height="160"></canvas>
@@ -1033,6 +1108,9 @@
             </button>
             <button type="button" id="btn-pause-settings" class="btn-pause-action" title="Ajustar configurações da partida">
               <span class="btn-icon">⚙️</span> Configurações
+            </button>
+            <button type="button" id="btn-pause-fullscreen" class="btn-pause-action btn-toggle-fullscreen" title="Alternar Tela Cheia">
+              <span class="btn-icon">⛶</span> Alternar Tela Cheia
             </button>
             <button type="button" id="btn-pause-main-menu" class="btn-pause-action btn-pause-danger" title="Sair da partida e voltar para a tela inicial">
               <span class="btn-icon">🏰</span> Voltar ao Menu Principal
@@ -1128,7 +1206,10 @@
                 <p class="match-config-desc">Personalize estruturas, economia, exército e terreno antes de iniciar a simulação.</p>
               </div>
             </div>
-            <button type="button" id="btn-close-match-config" class="btn-close-modal" title="Fechar e Retomar (Esc)" style="display: none;">✕</button>
+            <div class="match-config-header-actions">
+              <button type="button" id="btn-config-fullscreen" class="btn-fullscreen-modal btn-toggle-fullscreen" title="Alternar Tela Cheia">⛶</button>
+              <button type="button" id="btn-close-match-config" class="btn-close-modal" title="Fechar e Retomar (Esc)" style="display: none;">✕</button>
+            </div>
           </div>
 
           <!-- Abas de Navegação -->

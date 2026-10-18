@@ -183,6 +183,50 @@ class SoundManager {
   }
 
   /**
+   * rallyPointSet: Som sutil de confirmação tática para definição de Ponto de Encontro
+   */
+  public rallyPointSet(): void {
+    this.ensureAudioContext();
+    if (this.isMuted) return;
+    const ctx = this.ctx;
+    if (!ctx || !this.masterGain) return;
+    if (!this.throttle('rallyPointSet', 80)) return;
+
+    const t = ctx.currentTime;
+
+    // Primeiro tom tático claro e suave (580Hz -> 740Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(580, t);
+    osc1.frequency.exponentialRampToValueAtTime(740, t + 0.05);
+    gain1.gain.setValueAtTime(0.18, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    osc1.connect(gain1);
+    gain1.connect(this.masterGain);
+    osc1.start(t);
+    osc1.stop(t + 0.065);
+
+    // Segundo tom agudo de confirmação (880Hz -> 1050Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(880, t + 0.06);
+    osc2.frequency.exponentialRampToValueAtTime(1050, t + 0.12);
+    gain2.gain.setValueAtTime(0.001, t);
+    gain2.gain.setValueAtTime(0.20, t + 0.06);
+    gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc2.connect(gain2);
+    gain2.connect(this.masterGain);
+    osc2.start(t + 0.06);
+    osc2.stop(t + 0.16);
+  }
+
+  public playRallyPointSet(): void {
+    this.rallyPointSet();
+  }
+
+  /**
    * chopWood: Ruído percussivo curto (noise + lowpass filter) ritmado simulando machado na árvore
    */
   public chopWood(): void {

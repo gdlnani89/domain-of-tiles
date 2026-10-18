@@ -1089,6 +1089,15 @@ function createTownCenter(): THREE.Group {
 const townCenter = createTownCenter();
 const tcFlag = townCenter.getObjectByName('tc-flag') as THREE.Mesh;
 
+// --- SISTEMA DE PONTO DE ENCONTRO (RALLY POINT) ---
+export interface RallyPoint {
+  x: number;
+  z: number;
+  targetType: 'GROUND' | 'RESOURCE' | 'BUILDING';
+  targetId?: number | string;
+  resourceType?: 'WOOD' | 'FOOD' | 'STONE' | 'GOLD';
+}
+
 // --- TOWN CENTER HP (400 HP) & RUÍNAS ---
 export interface TownCenterState {
   group: THREE.Group;
@@ -1101,6 +1110,7 @@ export interface TownCenterState {
   hpBarFillMesh: THREE.Mesh;
   ruinsGroup: THREE.Group | null;
   currentOpacity?: number;
+  rallyPoint?: RallyPoint | null;
 }
 
 function createTownCenterHpBar(faction: UnitFaction = 'PLAYER'): { group: THREE.Group; fillMesh: THREE.Mesh } {
@@ -1134,7 +1144,8 @@ export const townCenterState: TownCenterState = {
   hpBarGroup: tcHpBar.group,
   hpBarFillMesh: tcHpBar.fillMesh,
   ruinsGroup: null,
-  currentOpacity: 1.0
+  currentOpacity: 1.0,
+  rallyPoint: null
 };
 
 export function updateTownCenterHpBar() {
@@ -1149,6 +1160,198 @@ export function updateTownCenterHpBar() {
 
   townCenterState.hpBarGroup.visible = !townCenterState.isDestroyed;
 }
+
+// --- MICRO-ANIMAÇÕES E VISUAIS 3D DO RALLY POINT ---
+interface RallyPulseEffect {
+  mesh: THREE.Mesh;
+  createdAt: number;
+  duration: number;
+}
+export const activeRallyPulses: RallyPulseEffect[] = [];
+
+export function spawnRallyPointPulse(worldX: number, worldZ: number) {
+  const geo = new THREE.RingGeometry(0.12, 0.24, 32);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(worldX, getTerrainHeight(worldX, worldZ) + 0.04, worldZ);
+  scene.add(mesh);
+  activeRallyPulses.push({ mesh, createdAt: performance.now(), duration: 500 });
+}
+
+let rallyPointVisualGroup: THREE.Group;
+let rallyFlagGroup: THREE.Group;
+let rallyFlagMesh: THREE.Mesh;
+let rallyLineMesh: THREE.Line;
+let rallyLineGeo: THREE.BufferGeometry;
+
+function initRallyPointVisuals() {
+  rallyPointVisualGroup = new THREE.Group();
+  rallyPointVisualGroup.name = 'rally-point-visuals';
+  rallyPointVisualGroup.visible = false;
+
+  rallyFlagGroup = new THREE.Group();
+
+  // Haste: CylinderGeometry(0.03, 0.03, 0.7) de madeira escura
+  const poleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.7, 12);
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.8 });
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.position.y = 0.35;
+  pole.castShadow = true;
+  rallyFlagGroup.add(pole);
+
+  // Topo dourado da haste
+  const finialGeo = new THREE.SphereGeometry(0.045, 12, 12);
+  const finialMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8, roughness: 0.2 });
+  const finial = new THREE.Mesh(finialGeo, finialMat);
+  finial.position.y = 0.7;
+  rallyFlagGroup.add(finial);
+
+  // Flâmula: triângulo em azul vibrante (0x2563eb)
+  const flagShape = new THREE.Shape();
+  flagShape.moveTo(0, 0.7);
+  flagShape.lineTo(0.35, 0.55);
+  flagShape.lineTo(0, 0.4);
+  flagShape.closePath();
+  const flagGeo = new THREE.ShapeGeometry(flagShape);
+  const flagMat = new THREE.MeshStandardMaterial({
+    color: 0x2563eb,
+    side: THREE.DoubleSide,
+    roughness: 0.3,
+    metalness: 0.1
+  });
+  rallyFlagMesh = new THREE.Mesh(flagGeo, flagMat);
+  rallyFlagMesh.castShadow = true;
+  rallyFlagGroup.add(rallyFlagMesh);
+
+  // Base circular suave no solo
+  const baseRingGeo = new THREE.RingGeometry(0.12, 0.24, 24);
+  const baseRingMat = new THREE.MeshBasicMaterial({
+    color: 0x2563eb,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false
+  });
+  const baseRing = new THREE.Mesh(baseRingGeo, baseRingMat);
+  baseRing.rotation.x = -Math.PI / 2;
+  baseRing.position.y = 0.02;
+  rallyFlagGroup.add(baseRing);
+
+  rallyPointVisualGroup.add(rallyFlagGroup);
+
+  // Linha conectora suave pontilhada/translúcida
+  rallyLineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, 0)
+  ]);
+  const lineMat = new THREE.LineDashedMaterial({
+    color: 0xfacc15,
+    dashSize: 0.3,
+    gapSize: 0.2,
+    transparent: true,
+    opacity: 0.8,
+    depthWrite: false
+  });
+  rallyLineMesh = new THREE.Line(rallyLineGeo, lineMat);
+  rallyLineMesh.frustumCulled = false;
+  rallyPointVisualGroup.add(rallyLineMesh);
+
+  scene.add(rallyPointVisualGroup);
+}
+initRallyPointVisuals();
+
+export function updateRallyPointVisuals(): void {
+  if (!rallyPointVisualGroup) return;
+
+  let activeRp: RallyPoint | null | undefined = null;
+  let sourcePos: THREE.Vector3 | null = null;
+
+  if (isTownCenterSelected && !townCenterState.isDestroyed) {
+    activeRp = townCenterState.rallyPoint;
+    sourcePos = new THREE.Vector3(TC_WORLD_CENTER.x, getTerrainHeight(TC_WORLD_CENTER.x, TC_WORLD_CENTER.z) + 0.2, TC_WORLD_CENTER.z);
+  } else if (
+    selectedBuilding &&
+    (selectedBuilding.faction === 'PLAYER' || !selectedBuilding.isEnemy) &&
+    ['BARRACKS', 'ARCHERY_RANGE', 'SCHOOL', 'COLLEGE'].includes(selectedBuilding.type)
+  ) {
+    activeRp = selectedBuilding.rallyPoint;
+    sourcePos = new THREE.Vector3(selectedBuilding.worldCenter.x, getTerrainHeight(selectedBuilding.worldCenter.x, selectedBuilding.worldCenter.z) + 0.2, selectedBuilding.worldCenter.z);
+  }
+
+  if (!activeRp || !sourcePos) {
+    rallyPointVisualGroup.visible = false;
+    return;
+  }
+
+  const targetY = getTerrainHeight(activeRp.x + 0.5, activeRp.z + 0.5);
+  rallyFlagGroup.position.set(activeRp.x + 0.5, targetY, activeRp.z + 0.5);
+
+  const startPt = sourcePos;
+  const endPt = new THREE.Vector3(activeRp.x + 0.5, targetY + 0.1, activeRp.z + 0.5);
+
+  rallyLineGeo.setFromPoints([startPt, endPt]);
+  rallyLineMesh.computeLineDistances();
+
+  rallyPointVisualGroup.visible = true;
+}
+
+export function updateTownCenterRallyHUD(): void {
+  const statusEl = document.getElementById('tc-rally-status');
+  const btnClear = document.getElementById('btn-clear-tc-rally') as HTMLButtonElement | null;
+  if (!statusEl) return;
+
+  const rp = townCenterState.rallyPoint;
+  if (rp) {
+    let typeDesc = '';
+    if (rp.targetType === 'RESOURCE') {
+      typeDesc = rp.resourceType
+        ? ` (${rp.resourceType === 'WOOD' ? 'Madeira 🪵' : (rp.resourceType === 'FOOD' ? 'Alimento 🍖' : (rp.resourceType === 'GOLD' ? 'Ouro 🪙' : 'Pedra 🪨'))})`
+        : ' (Recurso)';
+    } else if (rp.targetType === 'BUILDING') {
+      typeDesc = ' (Obra 🔨)';
+    }
+    statusEl.textContent = `🚩 Ponto de Encontro: (${rp.x}, ${rp.z})${typeDesc}`;
+    statusEl.style.color = '#38bdf8';
+    if (btnClear) btnClear.style.display = 'inline-flex';
+  } else {
+    statusEl.textContent = '🚩 Padrão (Porta)';
+    statusEl.style.color = '#94a3b8';
+    if (btnClear) btnClear.style.display = 'none';
+  }
+}
+
+export function updateBuildingRallyHUD(building: ConstructionBuilding | null): void {
+  if (!building) return;
+  let prefix = '';
+  if (building.type === 'BARRACKS') prefix = 'barracks';
+  else if (building.type === 'ARCHERY_RANGE') prefix = 'archery';
+  else if (building.type === 'SCHOOL') prefix = 'school';
+  else if (building.type === 'COLLEGE') prefix = 'college';
+  if (!prefix) return;
+
+  const statusEl = document.getElementById(`${prefix}-rally-status`);
+  const btnClear = document.getElementById(`btn-clear-${prefix}-rally`) as HTMLButtonElement | null;
+  if (!statusEl) return;
+
+  const rp = building.rallyPoint;
+  if (rp) {
+    statusEl.textContent = `🚩 Ponto de Encontro: (${rp.x}, ${rp.z})`;
+    statusEl.style.color = '#38bdf8';
+    if (btnClear) btnClear.style.display = 'inline-flex';
+  } else {
+    statusEl.textContent = '🚩 Padrão (Porta)';
+    statusEl.style.color = '#94a3b8';
+    if (btnClear) btnClear.style.display = 'none';
+  }
+}
+
 
 // --- SISTEMA DE PARTÍCULAS (EXPLOSÕES, FOGO & ESCOMBROS) ---
 interface ParticleEffect {
@@ -2361,6 +2564,9 @@ export interface ConstructionBuilding {
   leftGateLeaf?: THREE.Object3D;
   rightGateLeaf?: THREE.Object3D;
   portcullisMesh?: THREE.Object3D;
+
+  // Ponto de Encontro (Rally Point)
+  rallyPoint?: RallyPoint | null;
 }
 
 const BARRACKS_COST_WOOD = 50;
@@ -8893,11 +9099,14 @@ function selectTownCenter() {
   if (tcHudPanelEl) tcHudPanelEl.style.display = 'flex';
   updateTownCenterHUD();
   updateTownCenterSelectedHUD();
+  updateTownCenterRallyHUD();
+  updateRallyPointVisuals();
 }
 
 function deselectTownCenter() {
   isTownCenterSelected = false;
   if (tcHudPanelEl) tcHudPanelEl.style.display = 'none';
+  updateRallyPointVisuals();
 }
 
 function selectBuilding(building: ConstructionBuilding) {
@@ -8941,6 +9150,8 @@ function selectBuilding(building: ConstructionBuilding) {
   }
   updateBuildingSelectedHUD(building);
   updateBuildingHpBar(building);
+  updateBuildingRallyHUD(building);
+  updateRallyPointVisuals();
 }
 
 function deselectBuilding() {
@@ -8957,6 +9168,7 @@ function deselectBuilding() {
   if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'none';
   if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
   deselectTownCenter();
+  updateRallyPointVisuals();
 }
 
 function updateFarmHUD() {
@@ -9158,6 +9370,7 @@ function graduateStudent(unit: RTSUnit, school: ConstructionBuilding) {
   if (unit.isSelected) {
     updateUnitHUD();
   }
+  applyRallyPointOrder(unit, school.rallyPoint);
 }
 
 function updateSchools(delta: number) {
@@ -9526,6 +9739,7 @@ function graduateCollegeStudent(unit: RTSUnit, college: ConstructionBuilding, co
     updateUnitHUD();
   }
   updateResourceHUD();
+  applyRallyPointOrder(unit, college.rallyPoint);
 }
 
 function updateColleges(delta: number) {
@@ -11880,6 +12094,78 @@ export function commandRepairTownCenter(unit: RTSUnit) {
   unit.repairSoundTimer = 0;
   unit.buildCell = pickTownCenterPerimeterCell(unit);
   setUnitPath(unit, unit.buildCell);
+}
+
+export function applyRallyPointOrder(unit: RTSUnit, rp: RallyPoint | null | undefined): void {
+  if (!rp) return;
+
+  // Caso 1: Rally Point sobre Recurso Natural ou Fazenda (apenas aldeões)
+  if (unit.unitType === 'VILLAGER' && rp.targetType === 'RESOURCE') {
+    // 1. Árvore
+    if (rp.resourceType === 'WOOD' || rp.targetId !== undefined) {
+      const treeKey = typeof rp.targetId === 'number' ? rp.targetId : cellKey(rp.x, rp.z);
+      const tree = treesMap.get(treeKey);
+      if (tree && !tree.depleting && tree.wood > 0) {
+        commandGather(unit, tree);
+        return;
+      }
+    }
+
+    // 2. Arbusto de Frutas
+    if (rp.resourceType === 'FOOD' || rp.targetId !== undefined) {
+      const bushKey = typeof rp.targetId === 'number' ? rp.targetId : cellKey(rp.x, rp.z);
+      const bush = berryBushesMap.get(bushKey);
+      if (bush && !bush.depleting && bush.food > 0) {
+        commandForage(unit, bush);
+        return;
+      }
+    }
+
+    // 3. Fazenda
+    if (rp.resourceType === 'FOOD' || typeof rp.targetId === 'string') {
+      const farm = buildingsList.find(
+        (b) => (b.id === rp.targetId || (b.gridX === rp.x && b.gridZ === rp.z)) && b.type === 'FARM' && !b.isDepleted
+      );
+      if (farm) {
+        commandFarm(unit, farm);
+        return;
+      }
+    }
+
+    // 4. Jazida de Pedra
+    if (rp.resourceType === 'STONE' || rp.targetId !== undefined) {
+      const stoneKey = typeof rp.targetId === 'number' ? rp.targetId : cellKey(rp.x, rp.z);
+      const stoneMine = stoneMinesMap.get(stoneKey);
+      if (stoneMine && !stoneMine.depleting && stoneMine.stone > 0) {
+        commandMine(unit, stoneMine);
+        return;
+      }
+    }
+
+    // 5. Mina de Ouro
+    if (rp.resourceType === 'GOLD' || rp.targetId !== undefined) {
+      const goldKey = typeof rp.targetId === 'number' ? rp.targetId : cellKey(rp.x, rp.z);
+      const goldMine = goldMinesMap.get(goldKey);
+      if (goldMine && !goldMine.depleting && goldMine.gold > 0) {
+        commandMineGold(unit, goldMine);
+        return;
+      }
+    }
+  }
+
+  // Caso 2: Rally Point sobre Canteiro de Obras incompleto (apenas aldeões)
+  if (unit.unitType === 'VILLAGER' && rp.targetType === 'BUILDING' && rp.targetId) {
+    const bTarget = buildingsList.find(
+      (b) => (b.id === rp.targetId || (b.gridX === rp.x && b.gridZ === rp.z)) && !b.isCompleted
+    );
+    if (bTarget) {
+      commandBuild(unit, bTarget);
+      return;
+    }
+  }
+
+  // Caso 3: Marcha normal para a coordenada do Rally Point
+  commandMove(unit, new THREE.Vector2(rp.x, rp.z));
 }
 
 function commandReturnToBase(unit: RTSUnit) {
@@ -14888,6 +15174,60 @@ document.querySelectorAll('.btn-repair-action').forEach((btn) => {
   });
 });
 
+// Botões de Limpar Ponto de Encontro (Rally Point)
+document.getElementById('btn-clear-tc-rally')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  townCenterState.rallyPoint = null;
+  soundManager.uiClick();
+  updateTownCenterRallyHUD();
+  updateRallyPointVisuals();
+  spawnFloatingText(TC_WORLD_CENTER.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
+});
+
+document.getElementById('btn-clear-barracks-rally')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedBuilding && selectedBuilding.type === 'BARRACKS') {
+    selectedBuilding.rallyPoint = null;
+    soundManager.uiClick();
+    updateBuildingRallyHUD(selectedBuilding);
+    updateRallyPointVisuals();
+    spawnFloatingText(selectedBuilding.worldCenter.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
+  }
+});
+
+document.getElementById('btn-clear-archery-rally')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedBuilding && selectedBuilding.type === 'ARCHERY_RANGE') {
+    selectedBuilding.rallyPoint = null;
+    soundManager.uiClick();
+    updateBuildingRallyHUD(selectedBuilding);
+    updateRallyPointVisuals();
+    spawnFloatingText(selectedBuilding.worldCenter.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
+  }
+});
+
+document.getElementById('btn-clear-school-rally')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedBuilding && selectedBuilding.type === 'SCHOOL') {
+    selectedBuilding.rallyPoint = null;
+    soundManager.uiClick();
+    updateBuildingRallyHUD(selectedBuilding);
+    updateRallyPointVisuals();
+    spawnFloatingText(selectedBuilding.worldCenter.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
+  }
+});
+
+document.getElementById('btn-clear-college-rally')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedBuilding && selectedBuilding.type === 'COLLEGE') {
+    selectedBuilding.rallyPoint = null;
+    soundManager.uiClick();
+    updateBuildingRallyHUD(selectedBuilding);
+    updateRallyPointVisuals();
+    spawnFloatingText(selectedBuilding.worldCenter.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
+  }
+});
+
 window.addEventListener('keyup', (e) => {
   keys[e.key.toLowerCase()] = false;
 });
@@ -14910,6 +15250,114 @@ function handleRightClick(clientX: number, clientY: number) {
   }
 
   const selected = getSelectedUnits().filter((u) => u.faction === 'PLAYER');
+
+  // Interceptação de Ponto de Encontro (Rally Point) para edifícios de produção aliados selecionados
+  const isAlliedTcSelected = isTownCenterSelected && !townCenterState.isDestroyed;
+  const isAlliedProdBuildingSelected = !!(
+    selectedBuilding &&
+    (selectedBuilding.faction === 'PLAYER' || !selectedBuilding.isEnemy) &&
+    ['BARRACKS', 'ARCHERY_RANGE', 'SCHOOL', 'COLLEGE'].includes(selectedBuilding.type)
+  );
+
+  if (selected.length === 0 && (isAlliedTcSelected || isAlliedProdBuildingSelected)) {
+    let clickedGridX = 0;
+    let clickedGridZ = 0;
+    let clickedTargetType: 'GROUND' | 'RESOURCE' | 'BUILDING' = 'GROUND';
+    let clickedEntityId: number | string | undefined = undefined;
+    let resType: 'WOOD' | 'FOOD' | 'STONE' | 'GOLD' | undefined = undefined;
+
+    // 1. Verifica se clicou em uma construção
+    const bUnderCursor = getBuildingUnderCursor(clientX, clientY);
+    if (bUnderCursor) {
+      if (!bUnderCursor.isCompleted) {
+        clickedTargetType = 'BUILDING';
+        clickedEntityId = bUnderCursor.id;
+        clickedGridX = bUnderCursor.gridX;
+        clickedGridZ = bUnderCursor.gridZ;
+      } else if (bUnderCursor.type === 'FARM') {
+        clickedTargetType = 'RESOURCE';
+        clickedEntityId = bUnderCursor.id;
+        resType = 'FOOD';
+        clickedGridX = bUnderCursor.gridX;
+        clickedGridZ = bUnderCursor.gridZ;
+      } else {
+        clickedTargetType = 'GROUND';
+        clickedGridX = Math.floor(bUnderCursor.worldCenter.x);
+        clickedGridZ = Math.floor(bUnderCursor.worldCenter.z);
+      }
+    } else {
+      // 2. Recursos naturais sob o cursor
+      const gold = getGoldMineUnderCursor(clientX, clientY);
+      const stone = getStoneMineUnderCursor(clientX, clientY);
+      const bush = getBerryBushUnderCursor(clientX, clientY);
+      const tree = getTreeUnderCursor(clientX, clientY);
+
+      if (gold) {
+        clickedTargetType = 'RESOURCE';
+        clickedEntityId = gold.key;
+        resType = 'GOLD';
+        clickedGridX = gold.gridX;
+        clickedGridZ = gold.gridZ;
+      } else if (stone) {
+        clickedTargetType = 'RESOURCE';
+        clickedEntityId = stone.key;
+        resType = 'STONE';
+        clickedGridX = stone.gridX;
+        clickedGridZ = stone.gridZ;
+      } else if (bush) {
+        clickedTargetType = 'RESOURCE';
+        clickedEntityId = bush.key;
+        resType = 'FOOD';
+        clickedGridX = bush.gridX;
+        clickedGridZ = bush.gridZ;
+      } else if (tree) {
+        clickedTargetType = 'RESOURCE';
+        clickedEntityId = tree.key;
+        resType = 'WOOD';
+        clickedGridX = tree.gridX;
+        clickedGridZ = tree.gridZ;
+      } else {
+        // 3. Chão
+        setPointerNDC(clientX, clientY);
+        if (!raycaster.ray.intersectPlane(groundPlane, groundIntersect)) return;
+        clickedTargetType = 'GROUND';
+        clickedGridX = Math.floor(groundIntersect.x);
+        clickedGridZ = Math.floor(groundIntersect.z);
+      }
+    }
+
+    if (!isCellInside(clickedGridX, clickedGridZ)) return;
+
+    const rp: RallyPoint = {
+      x: clickedGridX,
+      z: clickedGridZ,
+      targetType: clickedTargetType,
+      targetId: clickedEntityId,
+      resourceType: resType
+    };
+
+    if (isAlliedTcSelected) {
+      townCenterState.rallyPoint = rp;
+      updateTownCenterRallyHUD();
+    } else if (selectedBuilding) {
+      selectedBuilding.rallyPoint = rp;
+      updateBuildingRallyHUD(selectedBuilding);
+    }
+
+    soundManager.rallyPointSet();
+    spawnRallyPointPulse(clickedGridX + 0.5, clickedGridZ + 0.5);
+
+    let desc = `(${clickedGridX}, ${clickedGridZ})`;
+    if (clickedTargetType === 'RESOURCE') {
+      desc = `Recurso ${resType ? (resType === 'WOOD' ? '🪵' : (resType === 'FOOD' ? '🍖' : (resType === 'GOLD' ? '🪙' : '🪨'))) : ''} (${clickedGridX}, ${clickedGridZ})`;
+    } else if (clickedTargetType === 'BUILDING') {
+      desc = `Canteiro de Obras 🔨 (${clickedGridX}, ${clickedGridZ})`;
+    }
+    spawnFloatingText(new THREE.Vector3(clickedGridX + 0.5, 1.4, clickedGridZ + 0.5), `🚩 Ponto de Encontro: ${desc}`, '#38bdf8');
+    updateRallyPointVisuals();
+    return;
+  }
+
   if (selected.length > 0) {
     soundManager.orderMove();
   }
@@ -18316,6 +18764,7 @@ function animate() {
               }
               spawnFloatingText(new THREE.Vector3(freeCell.x + 0.5, 1.6, freeCell.y + 0.5), '+1 Espadachim ⚔️', '#60a5fa');
               console.log(`[RTS Quartel] Espadachim concluído e spawnado em (${freeCell.x}, ${freeCell.y})!`);
+              applyRallyPointOrder(soldier, b.rallyPoint);
             } else {
               const existingGuards = unitsList.filter(
                 (u) => u.faction === 'ENEMY' && u.unitType === 'SWORDSMAN' && u.isEnemyPatrol && !u.isDying
@@ -18361,11 +18810,12 @@ function animate() {
             ) ?? findClosestWalkableCell(new THREE.Vector2(b.gridX + 1, b.gridZ + 1), new THREE.Vector2(b.gridX + 1, b.gridZ + 1));
 
             const archerFaction = b.faction;
-            createUnit(freeCell.x, freeCell.y, 'ARCHER', archerFaction);
+            const archer = createUnit(freeCell.x, freeCell.y, 'ARCHER', archerFaction);
             if (archerFaction === 'PLAYER') {
               gameStats.unitsTrainedTotal++;
               spawnFloatingText(new THREE.Vector3(freeCell.x + 0.5, 1.6, freeCell.y + 0.5), '+1 Arqueiro 🏹', '#34d399');
               console.log(`[RTS Campo de Tiro] Arqueiro concluído e spawnado em (${freeCell.x}, ${freeCell.y})!`);
+              applyRallyPointOrder(archer, b.rallyPoint);
             } else {
               spawnFloatingText(new THREE.Vector3(freeCell.x + 0.5, 1.6, freeCell.y + 0.5), '+1 Arqueiro Inimigo 🏹', '#ef4444');
             }
@@ -18428,10 +18878,11 @@ function animate() {
           (c) => isCellInside(c.x, c.y) && isCellWalkable(c.x, c.y) && !isCellOccupiedByUnit(c.x, c.y)
         ) ?? findClosestWalkableCell(new THREE.Vector2(tcCoord.minX + 1, tcCoord.minZ + 1), new THREE.Vector2(tcCoord.minX + 1, tcCoord.minZ + 1));
 
-        createUnit(freeCell.x, freeCell.y, 'VILLAGER', 'PLAYER');
+        const villager = createUnit(freeCell.x, freeCell.y, 'VILLAGER', 'PLAYER');
         gameStats.unitsTrainedTotal++;
         spawnFloatingText(new THREE.Vector3(freeCell.x + 0.5, 1.8, freeCell.y + 0.5), '+1 Aldeão 👨‍🌾', '#4ade80');
         console.log(`[RTS Town Center] Aldeão treinado e spawnado em (${freeCell.x}, ${freeCell.y})!`);
+        applyRallyPointOrder(villager, townCenterState.rallyPoint);
       }
 
       if (isTownCenterSelected) updateTownCenterHUD();
@@ -18767,11 +19218,32 @@ function animate() {
         });
       }
     }
+
+    // 6.5. Animação de pulsos do Ponto de Encontro (Rally Point) no solo
+    for (let i = activeRallyPulses.length - 1; i >= 0; i--) {
+      const p = activeRallyPulses[i];
+      const progress = (now - p.createdAt) / p.duration;
+      if (progress >= 1) {
+        scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        (p.mesh.material as THREE.Material).dispose();
+        activeRallyPulses.splice(i, 1);
+      } else {
+        const scale = 1.0 + progress * 3.5;
+        p.mesh.scale.set(scale, scale, 1);
+        (p.mesh.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - progress);
+      }
+    }
   } // Fim do bloco if (!isGamePaused)
 
   // =========================================================================
   // SISTEMAS DE RENDERIZAÇÃO, CÂMERA E HUD (SEMPRE ATIVOS MESMO PAUSADO)
   // =========================================================================
+
+  // Animação sutil de ondulação da flâmula do Rally Point
+  if (rallyPointVisualGroup && rallyPointVisualGroup.visible && rallyFlagMesh) {
+    rallyFlagMesh.rotation.y = Math.sin(now * 0.003) * 0.15;
+  }
 
   // Atualiza orientação das barras de HP das estruturas em relação à câmera
   townCenterState.hpBarGroup.quaternion.copy(camera.quaternion);
@@ -19176,6 +19648,7 @@ export interface BuildingSaveData {
   enrolledStudentIds?: number[];
   trainingQueue?: { unitType: UnitType; progressSec: number }[];
   farmFood?: number;
+  rallyPoint?: { x: number; z: number; targetType: string; targetId?: number | string };
 }
 
 export interface ResourceNodeSaveData {
@@ -19197,6 +19670,7 @@ export interface FullSaveState {
   units: UnitSaveData[];
   buildings: BuildingSaveData[];
   resources: ResourceNodeSaveData[];
+  townCenterRallyPoint?: { x: number; z: number; targetType: string; targetId?: number | string };
 }
 
 const QUICK_SAVE_KEY = 'rts_quicksave';
@@ -19323,7 +19797,13 @@ export function serializeGameState(saveName: string = 'Partida Salva'): FullSave
       isCompleted: b.isCompleted,
       enrolledStudentIds: enrolledStudentIds && enrolledStudentIds.length > 0 ? enrolledStudentIds : undefined,
       trainingQueue,
-      farmFood: b.type === 'FARM' && b.farmFood !== undefined ? Math.round(b.farmFood) : undefined
+      farmFood: b.type === 'FARM' && b.farmFood !== undefined ? Math.round(b.farmFood) : undefined,
+      rallyPoint: b.rallyPoint ? {
+        x: b.rallyPoint.x,
+        z: b.rallyPoint.z,
+        targetType: b.rallyPoint.targetType,
+        targetId: b.rallyPoint.targetId
+      } : undefined
     };
   });
 
@@ -19443,7 +19923,13 @@ export function serializeGameState(saveName: string = 'Partida Salva'): FullSave
     fogGrid: Array.from(fogGrid),
     units: unitsData,
     buildings: buildingsData,
-    resources: resourcesData
+    resources: resourcesData,
+    townCenterRallyPoint: townCenterState.rallyPoint ? {
+      x: townCenterState.rallyPoint.x,
+      z: townCenterState.rallyPoint.z,
+      targetType: townCenterState.rallyPoint.targetType,
+      targetId: townCenterState.rallyPoint.targetId
+    } : undefined
   };
 }
 
@@ -19532,6 +20018,17 @@ function createBuildingFromData(bData: BuildingSaveData): ConstructionBuilding |
       totalDuration: item.unitType === 'SWORDSMAN' ? currentMatchConfig.trainingTime : ARCHER_TRAIN_TIME_SEC
     }));
     b.trainingTimer = bData.trainingQueue[0]?.progressSec || 0;
+  }
+
+  if (bData.rallyPoint) {
+    b.rallyPoint = {
+      x: bData.rallyPoint.x,
+      z: bData.rallyPoint.z,
+      targetType: bData.rallyPoint.targetType as any,
+      targetId: bData.rallyPoint.targetId
+    };
+  } else {
+    b.rallyPoint = null;
   }
 
   return b;
@@ -20073,6 +20570,19 @@ export function deserializeAndLoadGame(save: FullSaveState): void {
     updateCameraFrustum();
     updateCameraTransform();
   }
+
+  // 13. Restaura Ponto de Encontro do Town Center
+  if (save.townCenterRallyPoint) {
+    townCenterState.rallyPoint = {
+      x: save.townCenterRallyPoint.x,
+      z: save.townCenterRallyPoint.z,
+      targetType: save.townCenterRallyPoint.targetType as any,
+      targetId: save.townCenterRallyPoint.targetId
+    };
+  } else {
+    townCenterState.rallyPoint = null;
+  }
+  updateRallyPointVisuals();
 
   closeSaveLoadModal();
   if (currentGameState === 'MENU') {

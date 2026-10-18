@@ -1486,6 +1486,62 @@ canvas {
   text-align: right;
 }
 
+/* Rally Point Status & Reset Controls */
+.rally-point-box {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 8px;
+  padding: 6px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.rally-point-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.rally-point-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #93c5fd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn-clear-rally {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-clear-rally:hover {
+  background: rgba(239, 68, 68, 0.35);
+  border-color: #f87171;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.btn-clear-rally:active {
+  transform: translateY(0);
+}
+
 /* Farm Agricultural Panel */
 .farm-panel {
   bottom: 104px;
