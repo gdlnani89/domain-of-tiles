@@ -366,10 +366,10 @@
               <span class="build-cost"><span class="cost-wood">100 🪵</span> + <span class="cost-stone">50 🪨</span> • [A]</span>
             </div>
           </button>
-          <button id="btn-build-tower" class="btn-build disabled" title="Construir Torre de Vigia (Atalho W) — Requer 70 Pedra + 30 Madeira">
+          <button id="btn-build-tower" class="btn-build btn-locked disabled" title="🔒 Requer um Arquiteto vivo formado na Faculdade!">
             <span class="build-icon">🗼</span>
             <div class="build-info">
-              <span class="build-name">Torre de Vigia</span>
+              <span class="build-name">Torre de Vigia <span class="lock-icon">🔒</span></span>
               <span class="build-cost"><span class="cost-stone">70 🪨</span> + <span class="cost-wood">30 🪵</span> • [W]</span>
             </div>
           </button>
@@ -401,10 +401,10 @@
               <span class="build-cost"><span class="cost-wood">70 🪵</span> • [I]</span>
             </div>
           </button>
-          <button id="btn-build-farm" class="btn-build disabled" title="Construir Fazenda (Atalho F) — Requer 60 Madeira (175 Alimento)">
+          <button id="btn-build-farm" class="btn-build btn-locked disabled" title="🔒 Requer um Agrônomo vivo formado na Faculdade!">
             <span class="build-icon">🚜</span>
             <div class="build-info">
-              <span class="build-name">Fazenda</span>
+              <span class="build-name">Fazenda <span class="lock-icon">🔒</span></span>
               <span class="build-cost"><span class="cost-wood">60 🪵</span> • [F]</span>
             </div>
           </button>
@@ -875,22 +875,22 @@
         <div class="college-course-selector-box">
           <span class="selector-title">Curso para Novos Ingressantes:</span>
           <div class="course-buttons-row">
-            <button type="button" class="btn-course-choice active" id="btn-course-architect" data-course="ARCHITECT" title="Arquiteto: +30% HP às obras e muralhas reforçadas">
-              <span class="course-icon">🏛️</span>
+            <button type="button" class="btn-course-choice active" id="btn-course-architect" data-course="ARCHITECT" title="Arquiteto: Muralhas, Portões e Torres de Vigia (+30% HP às obras)">
+              <span class="course-icon">📐</span>
               <span class="course-name">Arquiteto</span>
             </button>
-            <button type="button" class="btn-course-choice" id="btn-course-agronomist" data-course="AGRONOMIST" title="Agrônomo: Dobra rendimento de fazendas ao redor (x2)">
+            <button type="button" class="btn-course-choice" id="btn-course-agronomist" data-course="AGRONOMIST" title="Agrônomo: Fazendas, botânica e rotação de culturas (+20% colheita)">
               <span class="course-icon">🌾</span>
               <span class="course-name">Agrônomo</span>
             </button>
-            <button type="button" class="btn-course-choice" id="btn-course-alchemist" data-course="ALCHEMIST" title="Alquimista: Ouro passivo (+1🪙/3s) e armas incendiárias">
-              <span class="course-icon">⚗️</span>
-              <span class="course-name">Alquimista</span>
+            <button type="button" class="btn-course-choice" id="btn-course-armorer" data-course="ARMORER" title="Armeiro: Mestre da metalurgia bélica (+30 HP e -25% dano a tropas militares)">
+              <span class="course-icon">🛡️</span>
+              <span class="course-name">Armeiro</span>
             </button>
           </div>
           <div class="course-description-banner" id="course-description-banner">
-            <span id="course-desc-icon">🏛️</span>
-            <span id="course-desc-text"><strong>Arquiteto Mestre:</strong> Obras recebem +30% de HP e velocidade recorde de construção.</span>
+            <span id="course-desc-icon">📐</span>
+            <span id="course-desc-text"><strong>Arquiteto Mestre:</strong> Desbloqueia Torres de Vigia, Muralhas de pedra e Portões, e confere +30% de HP a construções.</span>
           </div>
         </div>
 

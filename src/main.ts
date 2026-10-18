@@ -103,7 +103,7 @@ export interface MatchConfig {
   treeCapacity: number;    // padrão 100 (min: 20, max: 500)
   stoneCapacity: number;   // padrão 250 (min: 50, max: 1000)
   goldCapacity: number;    // padrão 300 (min: 50, max: 1000)
-  swordsmanHp: number;     // padrão 60 (min: 20, max: 200)
+  swordsmanHp: number;     // padrão 100 (min: 20, max: 200)
   swordsmanDamage: number; // padrão 8 (min: 2, max: 40)
   trainingTime: number;    // padrão 5.0s (min: 1.0s, max: 15.0s)
   initialWood: number;     // padrão 150 (min: 0, max: 500)
@@ -124,7 +124,7 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   treeCapacity: 100,
   stoneCapacity: 250,
   goldCapacity: 300,
-  swordsmanHp: 60,
+  swordsmanHp: 100,
   swordsmanDamage: 8,
   trainingTime: 5.0,
   initialWood: 150,
@@ -2302,7 +2302,7 @@ export interface ProductionQueueItem {
   totalDuration: number;
 }
 
-export type EliteCourse = 'ARCHITECT' | 'AGRONOMIST' | 'ALCHEMIST';
+export type EliteCourse = 'ARCHITECT' | 'AGRONOMIST' | 'ARMORER' | 'ALCHEMIST';
 
 export interface EnrolledStudent {
   unitId: string;
@@ -2400,16 +2400,42 @@ const GATE_HP = 350;
 export function getLivingArchitectsCount(): number {
   return unitsList.filter(
     (u) =>
-      u.faction === 'PLAYER' &&
+      ((u.faction as string) === 'ALLIED' || !u.isEnemy) &&
       !u.isDying &&
       u.hp > 0 &&
       u.educationLevel >= 2 &&
-      (u.eliteSpecialization === 'ARCHITECT' || (u as any).specialization === 'ARCHITECT')
+      (u.specialization === 'ARCHITECT' || u.eliteSpecialization === 'ARCHITECT')
   ).length;
 }
 
 export function hasLivingArchitect(): boolean {
-  return getLivingArchitectsCount() > 0;
+  return unitsList.some(
+    (u) =>
+      ((u.faction as string) === 'ALLIED' || !u.isEnemy) &&
+      (u.specialization === 'ARCHITECT' || u.eliteSpecialization === 'ARCHITECT') &&
+      u.hp > 0 &&
+      !u.isDying
+  );
+}
+
+export function hasLivingAgronomist(): boolean {
+  return unitsList.some(
+    (u) =>
+      ((u.faction as string) === 'ALLIED' || !u.isEnemy) &&
+      (u.specialization === 'AGRONOMIST' || u.eliteSpecialization === 'AGRONOMIST') &&
+      u.hp > 0 &&
+      !u.isDying
+  );
+}
+
+export function hasLivingArmorer(): boolean {
+  return unitsList.some(
+    (u) =>
+      ((u.faction as string) === 'ALLIED' || !u.isEnemy) &&
+      (u.specialization === 'ARMORER' || u.eliteSpecialization === 'ARMORER') &&
+      u.hp > 0 &&
+      !u.isDying
+  );
 }
 const FARM_FOOD_CAPACITY = 175;
 const MAX_GLOBAL_POPULATION = 50;
@@ -7694,6 +7720,7 @@ const btnEjectCollegeStudents = document.getElementById('btn-eject-college-stude
 const btnEnrollCollegeAuto = document.getElementById('btn-enroll-college-auto');
 const btnCourseArchitect = document.getElementById('btn-course-architect');
 const btnCourseAgronomist = document.getElementById('btn-course-agronomist');
+const btnCourseArmorer = document.getElementById('btn-course-armorer');
 const btnCourseAlchemist = document.getElementById('btn-course-alchemist');
 const courseDescIconEl = document.getElementById('course-desc-icon');
 const courseDescTextEl = document.getElementById('course-desc-text');
@@ -7723,6 +7750,34 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
         '#ef4444'
       );
       console.warn('[RTS Construção] Bloqueado: Fortificações requerem um Arquiteto vivo formado na Faculdade.');
+      return;
+    }
+  }
+
+  // Verificação obrigatória de Arquiteto vivo para Torre de Vigia
+  if (type === 'TOWER') {
+    if (!hasLivingArchitect()) {
+      soundManager.popCappedAlert();
+      spawnFloatingText(
+        new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+        '⚠️ Você precisa de um Arquiteto para projetar Torres de Vigia!',
+        '#ef4444'
+      );
+      console.warn('[RTS Construção] Bloqueado: Torres de Vigia requerem um Arquiteto vivo formado na Faculdade.');
+      return;
+    }
+  }
+
+  // Verificação obrigatória de Agrônomo vivo para Fazendas
+  if (type === 'FARM') {
+    if (!hasLivingAgronomist()) {
+      soundManager.popCappedAlert();
+      spawnFloatingText(
+        new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+        '⚠️ Você precisa de um Agrônomo para planejar terras cultiváveis!',
+        '#ef4444'
+      );
+      console.warn('[RTS Construção] Bloqueado: Fazendas requerem um Agrônomo vivo formado na Faculdade.');
       return;
     }
   }
@@ -7974,6 +8029,17 @@ function placeBarracks(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeTower(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!hasLivingArchitect()) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(
+      new THREE.Vector3(gx + 0.5, 2.2, gz + 0.5),
+      '⚠️ Você precisa de um Arquiteto para projetar Torres de Vigia!',
+      '#ef4444'
+    );
+    exitPlacementMode();
+    return;
+  }
+
   if (resources.stone < TOWER_COST_STONE || resources.wood < TOWER_COST_WOOD) {
     console.log('[RTS Construção] Recursos insuficientes para Torre de Vigia!');
     exitPlacementMode();
@@ -8097,6 +8163,17 @@ function placeMill(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeFarm(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!hasLivingAgronomist()) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(
+      new THREE.Vector3(gx + 1, 2.2, gz + 1),
+      '⚠️ Você precisa de um Agrônomo para planejar terras cultiváveis!',
+      '#ef4444'
+    );
+    exitPlacementMode();
+    return;
+  }
+
   if (resources.wood < FARM_COST_WOOD) {
     console.log(`[RTS Construção] Madeira insuficiente para Fazenda (${resources.wood}/${FARM_COST_WOOD} 🪵)!`);
     exitPlacementMode();
@@ -9173,15 +9250,19 @@ function setCollegeCourse(course: EliteCourse) {
   }
   btnCourseArchitect?.classList.toggle('active', course === 'ARCHITECT');
   btnCourseAgronomist?.classList.toggle('active', course === 'AGRONOMIST');
+  btnCourseArmorer?.classList.toggle('active', course === 'ARMORER');
   btnCourseAlchemist?.classList.toggle('active', course === 'ALCHEMIST');
 
   if (courseDescIconEl && courseDescTextEl) {
     if (course === 'ARCHITECT') {
-      courseDescIconEl.textContent = '🏛️';
-      courseDescTextEl.innerHTML = '<strong>Arquiteto Mestre:</strong> Desbloqueia muralhas de pedra reforçadas e confere +30% de HP a todas as construções concluídas.';
+      courseDescIconEl.textContent = '📐';
+      courseDescTextEl.innerHTML = '<strong>Arquiteto Mestre:</strong> Desbloqueia Torres de Vigia, Muralhas de pedra e Portões, e confere +30% de HP a construções.';
     } else if (course === 'AGRONOMIST') {
       courseDescIconEl.textContent = '🌾';
-      courseDescTextEl.innerHTML = '<strong>Agrônomo Real:</strong> Dobra o rendimento de fazendas ao redor (2x colheita e conservação do solo).';
+      courseDescTextEl.innerHTML = '<strong>Agrônomo Real:</strong> Desbloqueia Fazendas e confere +20% de velocidade de colheita de alimento em todas as fazendas.';
+    } else if (course === 'ARMORER') {
+      courseDescIconEl.textContent = '🛡️';
+      courseDescTextEl.innerHTML = '<strong>Mestre Armeiro:</strong> Forja armaduras pesadas que concedem +30 HP a Espadachins e reduzem em 25% todo dano físico sofrido por soldados aliados.';
     } else {
       courseDescIconEl.textContent = '⚗️';
       courseDescTextEl.innerHTML = '<strong>Mestre Alquimista:</strong> Gera ouro passivo contínuo (+1 🪙/3s de trabalho) e desbloqueia armas incendiárias.';
@@ -9191,6 +9272,7 @@ function setCollegeCourse(course: EliteCourse) {
 
 btnCourseArchitect?.addEventListener('click', () => setCollegeCourse('ARCHITECT'));
 btnCourseAgronomist?.addEventListener('click', () => setCollegeCourse('AGRONOMIST'));
+btnCourseArmorer?.addEventListener('click', () => setCollegeCourse('ARMORER'));
 btnCourseAlchemist?.addEventListener('click', () => setCollegeCourse('ALCHEMIST'));
 btnCloseCollege?.addEventListener('click', () => deselectBuilding());
 btnEjectCollegeStudents?.addEventListener('click', () => {
@@ -9281,8 +9363,9 @@ function updateCollegeHUD() {
         const pct = Math.min(100, Math.floor((s.progressSec / studyDuration) * 100));
         const remTime = Math.max(0, Math.ceil(studyDuration - s.progressSec));
         const courseLabel =
-          s.chosenCourse === 'ARCHITECT' ? '🏛️ Arquiteto' :
-          s.chosenCourse === 'AGRONOMIST' ? '🌾 Agrônomo' : '⚗️ Alquimista';
+          s.chosenCourse === 'ARCHITECT' ? '📐 Arquiteto' :
+          s.chosenCourse === 'AGRONOMIST' ? '🌾 Agrônomo' :
+          s.chosenCourse === 'ARMORER' ? '🛡️ Armeiro' : '⚗️ Alquimista';
         html += `
           <div class="student-item" data-unit-id="${s.unitId}">
             <div class="student-info-row">
@@ -9394,6 +9477,7 @@ function graduateCollegeStudent(unit: RTSUnit, college: ConstructionBuilding, co
   // Concede graduação nível 2 de elite
   unit.educationLevel = 2;
   unit.eliteSpecialization = course;
+  unit.specialization = course;
   unit.canEnrollInCollege = false;
 
   // Se Arquiteto: desbloqueia muralhas de pedra reforçadas com brasões e ameias
@@ -9402,12 +9486,24 @@ function graduateCollegeStudent(unit: RTSUnit, college: ConstructionBuilding, co
     spawnFloatingText(college.worldCenter.clone().setY(3.2), '🛡️ Muralhas de Pedra Reforçadas Desbloqueadas!', '#38bdf8');
   }
 
-  // Ativa itens visuais distintivos: Capelo Cerimonial, Beca Acadêmica e Aura Dourada
+  // Ativa itens visuais distintivos: Capelo Cerimonial, Beca Acadêmica / Avental e Aura Dourada
   if (unit.academicCapGroup) {
     unit.academicCapGroup.visible = true;
   }
-  if (unit.academicGownMesh) {
-    unit.academicGownMesh.visible = true;
+  if (course === 'ARMORER') {
+    if (unit.armorerEquipmentGroup) {
+      unit.armorerEquipmentGroup.visible = true;
+    }
+    if (unit.academicGownMesh) {
+      unit.academicGownMesh.visible = false;
+    }
+  } else {
+    if (unit.academicGownMesh) {
+      unit.academicGownMesh.visible = true;
+    }
+    if (unit.armorerEquipmentGroup) {
+      unit.armorerEquipmentGroup.visible = false;
+    }
   }
   if (unit.auraRingMesh && unit.isSelected) {
     unit.auraRingMesh.visible = true;
@@ -9415,11 +9511,14 @@ function graduateCollegeStudent(unit: RTSUnit, college: ConstructionBuilding, co
 
   // Feedback audiovisual de elite
   const title =
-    course === 'ARCHITECT' ? '🏛️ Arquiteto de Elite!' :
-    course === 'AGRONOMIST' ? '🌾 Agrônomo Real!' : '⚗️ Mestre Alquimista!';
+    course === 'ARCHITECT' ? '📐 Arquiteto de Elite!' :
+    course === 'AGRONOMIST' ? '🌾 Agrônomo Real!' :
+    course === 'ARMORER' ? '🛡️ Armeiro / Mestre Forjador!' : '⚗️ Mestre Alquimista!';
   spawnFloatingText(unit.group.position.clone().setY(2.4), `🌟 Formado: ${title}`, '#facc15');
   spawnParticles(unit.group.position.clone().setY(1.2), 30, 0xfacc15);
   soundManager.buildingComplete();
+
+  updateSwordsmenArmorerBuff();
 
   console.log(`[RTS Formatura Elite] Parabéns! Aldeão ${unit.id} concluiu a Faculdade e agora é ${title}`);
 
@@ -9543,8 +9642,9 @@ function updateUnitHUD() {
       unitCardAvatarEl.textContent = '⚔️';
     } else if (unit.educationLevel >= 2) {
       unitCardAvatarEl.textContent =
-        unit.eliteSpecialization === 'ARCHITECT' ? '🏛️' :
-        unit.eliteSpecialization === 'AGRONOMIST' ? '🌾' : '⚗️';
+        unit.eliteSpecialization === 'ARCHITECT' ? '📐' :
+        unit.eliteSpecialization === 'AGRONOMIST' ? '🌾' :
+        unit.eliteSpecialization === 'ARMORER' ? '🛡️' : '⚗️';
     } else if (unit.educationLevel >= 1) {
       unitCardAvatarEl.textContent = '🎓';
     } else {
@@ -9558,7 +9658,8 @@ function updateUnitHUD() {
     } else if (unit.educationLevel >= 2) {
       unitCardNameEl.textContent =
         unit.eliteSpecialization === 'ARCHITECT' ? 'Arquiteto Real' :
-        unit.eliteSpecialization === 'AGRONOMIST' ? 'Agrônomo Real' : 'Mestre Alquimista';
+        unit.eliteSpecialization === 'AGRONOMIST' ? 'Agrônomo Real' :
+        unit.eliteSpecialization === 'ARMORER' ? 'Mestre Armeiro' : 'Mestre Alquimista';
     } else if (unit.educationLevel >= 1) {
       unitCardNameEl.textContent = 'Cidadão Instruído';
     } else {
@@ -9589,8 +9690,9 @@ function updateUnitHUD() {
       unitCardRoleEl.textContent = 'Infantaria Militar Aliada';
     } else if (unit.educationLevel >= 2) {
       const specName =
-        unit.eliteSpecialization === 'ARCHITECT' ? '🏛️ Arquiteto Mestre (+30% HP Obras)' :
-        unit.eliteSpecialization === 'AGRONOMIST' ? '🌾 Agrônomo Real (x2 Fazendas)' :
+        unit.eliteSpecialization === 'ARCHITECT' ? '📐 Arquiteto Mestre (Fortificações & Torres)' :
+        unit.eliteSpecialization === 'AGRONOMIST' ? '🌾 Agrônomo Real (Fazendas & +20% Safra)' :
+        unit.eliteSpecialization === 'ARMORER' ? '🛡️ Armeiro / Mestre Forjador (+30 HP & -25% Dano)' :
         '⚗️ Mestre Alquimista (+1 🪙/3s)';
       unitCardRoleEl.textContent = specName;
     } else if (unit.educationLevel >= 1) {
@@ -9628,16 +9730,24 @@ function updateUnitHUD() {
       unitCardPerksEl.style.display = 'flex';
       if (unit.eliteSpecialization === 'ARCHITECT') {
         unitCardPerksEl.innerHTML = `
-          <span class="perk-tag tag-architect-special" title="Habilita a colocação de Muralhas de Pedra e Portões">📐 Mestre Construtor de Fortificações</span>
+          <span class="perk-tag tag-architect-special" title="Habilita a colocação de Torres de Vigia, Muralhas e Portões">📐 Mestre Construtor de Fortificações</span>
           <span class="perk-tag" title="Capacidade de carga expandida para 20">📦 Carga: 20</span>
           <span class="perk-tag" title="Velocidade recorde de construção">🔨 Obras: +60%</span>
-          <span class="perk-tag" title="+30% de HP às obras construídas">🛡️ Muralhas: +30% HP</span>
+          <span class="perk-tag" title="+30% de HP às obras construídas">🛡️ Fortificações: +30% HP</span>
         `;
       } else if (unit.eliteSpecialization === 'AGRONOMIST') {
         unitCardPerksEl.innerHTML = `
+          <span class="perk-tag tag-armorer-special" title="Especialista em botânica, solo e rotação de culturas">🌾 Agrônomo Real</span>
           <span class="perk-tag" title="Capacidade de carga expandida para 20">📦 Carga: 20</span>
-          <span class="perk-tag" title="Dobra o rendimento de fazendas e arbustos colhidos">🌾 Safra: 2x Dobrada</span>
-          <span class="perk-tag" title="Fazendas adjacentes ganham rendimento extra">✨ Aura Agrícola</span>
+          <span class="perk-tag" title="+20% de velocidade de colheita em todas as fazendas">🌾 Colheita: +20%</span>
+          <span class="perk-tag" title="Dobra o rendimento de fazendas ao redor">✨ Aura Agrícola (2x)</span>
+        `;
+      } else if (unit.eliteSpecialization === 'ARMORER') {
+        unitCardPerksEl.innerHTML = `
+          <span class="perk-tag tag-armorer-special" title="Mestre da metalurgia bélica e armaduras pesadas">🛡️ Mestre Armeiro</span>
+          <span class="perk-tag" title="+30 HP para tropas de infantaria">❤️ Soldados: +30 HP</span>
+          <span class="perk-tag" title="-25% de dano físico recebido por soldados">🛡️ Armadura Temperada: -25% Dano</span>
+          <span class="perk-tag" title="Capacidade de carga expandida para 20">📦 Carga: 20</span>
         `;
       } else {
         unitCardPerksEl.innerHTML = `
@@ -9652,6 +9762,12 @@ function updateUnitHUD() {
         <span class="perk-tag" title="Capacidade de carga expandida de 10 para 20">📦 Carga: 20</span>
         <span class="perk-tag" title="Velocidade de construção aumentada em +40%">🔨 Obras: +40%</span>
         <span class="perk-tag" title="Velocidade de coleta de todos os recursos aumentada em +25%">⛏️ Coleta: +25%</span>
+      `;
+    } else if (((unit.faction as string) === 'ALLIED' || !unit.isEnemy) && unit.unitType === 'SWORDSMAN' && hasLivingArmorer()) {
+      unitCardPerksEl.style.display = 'flex';
+      unitCardPerksEl.innerHTML = `
+        <span class="perk-tag tag-armorer-shield" title="Armadura reforçada pelo Mestre Armeiro">🛡️ Armadura de Aço Reforçada (-25% dano)</span>
+        <span class="perk-tag tag-armorer-buff" title="+30 de Vida Máxima concedido pelo Armeiro">❤️ Vitalidade de Ferro (+30 HP)</span>
       `;
     } else {
       unitCardPerksEl.style.display = 'none';
@@ -10208,14 +10324,24 @@ function updateResourceHUD(bump = false) {
     }
   }
 
-  // Atualiza disponibilidade do botão de Construção (Torre de Vigia - 70 Pedra + 30 Madeira)
+  const hasArchitect = hasLivingArchitect();
+  const hasAgronomist = hasLivingAgronomist();
+
+  // Atualiza disponibilidade do botão de Construção (Torre de Vigia - 70 Pedra + 30 Madeira, Requer Arquiteto Vivo)
   if (btnBuildTower) {
-    if (resources.stone >= TOWER_COST_STONE && resources.wood >= TOWER_COST_WOOD) {
-      btnBuildTower.classList.remove('disabled');
-      btnBuildTower.title = 'Construir Torre de Vigia (Atalho W)';
-    } else {
+    if (!hasArchitect) {
+      btnBuildTower.classList.add('btn-locked');
       btnBuildTower.classList.add('disabled');
-      btnBuildTower.title = `Construir Torre (Requer 70 Pedra, 30 Madeira • Você tem ${resources.stone} 🪨, ${resources.wood} 🪵)`;
+      btnBuildTower.title = '🔒 Requer um Arquiteto vivo formado na Faculdade!';
+    } else {
+      btnBuildTower.classList.remove('btn-locked');
+      if (resources.stone >= TOWER_COST_STONE && resources.wood >= TOWER_COST_WOOD) {
+        btnBuildTower.classList.remove('disabled');
+        btnBuildTower.title = 'Construir Torre de Vigia (Atalho W) — 70 Pedra + 30 Madeira';
+      } else {
+        btnBuildTower.classList.add('disabled');
+        btnBuildTower.title = `Construir Torre (Requer 70 Pedra, 30 Madeira • Você tem ${resources.stone} 🪨, ${resources.wood} 🪵)`;
+      }
     }
   }
 
@@ -10263,14 +10389,21 @@ function updateResourceHUD(bump = false) {
     }
   }
 
-  // Atualiza disponibilidade do botão de Construção (Fazenda - 60 Madeira)
+  // Atualiza disponibilidade do botão de Construção (Fazenda - 60 Madeira, Requer Agrônomo Vivo)
   if (btnBuildFarm) {
-    if (resources.wood >= FARM_COST_WOOD) {
-      btnBuildFarm.classList.remove('disabled');
-      btnBuildFarm.title = 'Construir Fazenda (Atalho F) — Requer 60 Madeira (175 Alimento)';
-    } else {
+    if (!hasAgronomist) {
+      btnBuildFarm.classList.add('btn-locked');
       btnBuildFarm.classList.add('disabled');
-      btnBuildFarm.title = `Construir Fazenda (Requer 60 Madeira • Você tem ${resources.wood} 🪵)`;
+      btnBuildFarm.title = '🔒 Requer um Agrônomo vivo formado na Faculdade!';
+    } else {
+      btnBuildFarm.classList.remove('btn-locked');
+      if (resources.wood >= FARM_COST_WOOD) {
+        btnBuildFarm.classList.remove('disabled');
+        btnBuildFarm.title = 'Construir Fazenda (Atalho F) — Requer 60 Madeira (175 Alimento)';
+      } else {
+        btnBuildFarm.classList.add('disabled');
+        btnBuildFarm.title = `Construir Fazenda (Requer 60 Madeira • Você tem ${resources.wood} 🪵)`;
+      }
     }
   }
 
@@ -10297,7 +10430,6 @@ function updateResourceHUD(bump = false) {
   }
 
   // Atualiza disponibilidade do botão de Construção (Muralha de Pedra - 5 Pedra, Requer Arquiteto Vivo)
-  const hasArchitect = hasLivingArchitect();
   if (btnBuildWall) {
     if (!hasArchitect) {
       btnBuildWall.classList.add('btn-locked');
@@ -10456,6 +10588,10 @@ export interface RTSUnit {
   isGarrisoned: boolean;
   canEnrollInCollege?: boolean;
   eliteSpecialization?: EliteCourse | null;
+  specialization?: EliteCourse | null;
+  hasArmorerHpBuff?: boolean;
+  armorerEquipmentGroup?: THREE.Group;
+  armorerShieldRim?: THREE.Mesh;
   backpackMesh?: THREE.Group;
   academicCapGroup?: THREE.Group;
   academicGownMesh?: THREE.Group | THREE.Mesh;
@@ -10646,6 +10782,20 @@ function createSwordsmanEquipment(faction: UnitFaction): THREE.Group {
     const shieldBoss = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), crestMat);
     shieldBoss.position.x = -0.025;
     shieldGroup.add(shieldBoss);
+
+    // Borda de escudo reforçada com liga dourada forjada pelo Armeiro
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      metalness: 0.88,
+      roughness: 0.2,
+      emissive: 0x713f12,
+      emissiveIntensity: 0.35
+    });
+    const rimMesh = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.025, 8, 24), rimMat);
+    rimMesh.rotation.y = Math.PI / 2;
+    rimMesh.name = 'armorerShieldRim';
+    rimMesh.visible = false;
+    shieldGroup.add(rimMesh);
 
     equip.add(shieldGroup);
   } else {
@@ -10934,6 +11084,74 @@ function createAcademicGown(): THREE.Group {
   return g;
 }
 
+function createArmorerEquipment(): THREE.Group {
+  const g = new THREE.Group();
+
+  // Avental de couro escuro
+  const apronMat = new THREE.MeshStandardMaterial({
+    color: 0x2d1810, // Couro escuro
+    roughness: 0.9,
+    metalness: 0.05
+  });
+  const apronBody = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.52, 0.09), apronMat);
+  apronBody.position.set(0, 0.38, 0.22);
+  g.add(apronBody);
+
+  // Alças do avental cruzadas nos ombros
+  const strapMat = new THREE.MeshStandardMaterial({ color: 0x1a0f0a, roughness: 0.95 });
+  const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, 0.04), strapMat);
+  strapL.position.set(-0.12, 0.68, 0.16);
+  strapL.rotation.x = 0.2;
+  g.add(strapL);
+
+  const strapR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, 0.04), strapMat);
+  strapR.position.set(0.12, 0.68, 0.16);
+  strapR.rotation.x = 0.2;
+  g.add(strapR);
+
+  // Marreta de Forja (Forge Hammer)
+  const hammerGroup = new THREE.Group();
+  hammerGroup.position.set(0.35, 0.38, 0.18);
+  hammerGroup.rotation.x = Math.PI / 5;
+  hammerGroup.rotation.z = -Math.PI / 12;
+
+  const handleMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.7 });
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.44, 8), handleMat);
+  handle.position.y = 0.12;
+  hammerGroup.add(handle);
+
+  const hammerHeadMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.85, roughness: 0.25 });
+  const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.2), hammerHeadMat);
+  hammerHead.position.set(0, 0.3, 0);
+  hammerGroup.add(hammerHead);
+
+  g.add(hammerGroup);
+  g.visible = false;
+  return g;
+}
+
+export function updateSwordsmenArmorerBuff() {
+  const armorerAlive = hasLivingArmorer();
+  for (const u of unitsList) {
+    if (((u.faction as string) === 'ALLIED' || !u.isEnemy) && u.unitType === 'SWORDSMAN' && !u.isDying) {
+      if (armorerAlive && !u.hasArmorerHpBuff) {
+        u.hasArmorerHpBuff = true;
+        u.maxHp += 30;
+        u.hp += 30;
+        updateUnitHpBar(u, performance.now());
+      } else if (!armorerAlive && u.hasArmorerHpBuff) {
+        u.hasArmorerHpBuff = false;
+        u.maxHp = Math.max(1, u.maxHp - 30);
+        u.hp = Math.min(u.hp, u.maxHp);
+        updateUnitHpBar(u, performance.now());
+      }
+      if (u.armorerShieldRim) {
+        u.armorerShieldRim.visible = armorerAlive;
+      }
+    }
+  }
+}
+
 function createAuraRing(): THREE.Mesh {
   // Aura sutil dourada no chão para destacar especialistas de elite
   const auraGeo = new THREE.RingGeometry(0.52, 0.62, 32);
@@ -10974,8 +11192,13 @@ function createUnit(
   let attackCooldown = 1.0;
   let speed = 4.2;
 
+  let hasArmorerBuff = false;
   if (unitType === 'SWORDSMAN') {
     maxHp = currentMatchConfig.swordsmanHp;
+    if ((faction === 'PLAYER' || (faction as string) === 'ALLIED') && hasLivingArmorer()) {
+      maxHp += 30;
+      hasArmorerBuff = true;
+    }
     damage = currentMatchConfig.swordsmanDamage;
     bodyColor = faction === 'PLAYER' ? 0x1d4ed8 : 0xdc2626;
   } else if (unitType === 'ARCHER') {
@@ -11019,9 +11242,14 @@ function createUnit(
   } = createCarryMesh();
   unitGroup.add(carryMesh);
 
+  let armorerShieldRim: THREE.Mesh | undefined;
   if (unitType === 'SWORDSMAN') {
     const swordsmanEquip = createSwordsmanEquipment(faction);
     unitGroup.add(swordsmanEquip);
+    armorerShieldRim = swordsmanEquip.getObjectByName('armorerShieldRim') as THREE.Mesh;
+    if (armorerShieldRim && (faction === 'PLAYER' || (faction as string) === 'ALLIED')) {
+      armorerShieldRim.visible = hasLivingArmorer();
+    }
   } else if (unitType === 'ARCHER') {
     const archerEquip = createArcherEquipment(faction);
     unitGroup.add(archerEquip);
@@ -11030,6 +11258,7 @@ function createUnit(
   let backpackMesh: THREE.Group | undefined;
   let academicCapGroup: THREE.Group | undefined;
   let academicGownMesh: THREE.Group | THREE.Mesh | undefined;
+  let armorerEquipmentGroup: THREE.Group | undefined;
   let auraRingMesh: THREE.Mesh | undefined;
   if (unitType === 'VILLAGER') {
     backpackMesh = createVillagerBackpack();
@@ -11040,6 +11269,9 @@ function createUnit(
 
     academicGownMesh = createAcademicGown();
     unitGroup.add(academicGownMesh);
+
+    armorerEquipmentGroup = createArmorerEquipment();
+    unitGroup.add(armorerEquipmentGroup);
 
     auraRingMesh = createAuraRing();
     unitGroup.add(auraRingMesh);
@@ -11121,6 +11353,10 @@ function createUnit(
     isGarrisoned: false,
     canEnrollInCollege: false,
     eliteSpecialization: null,
+    specialization: null,
+    hasArmorerHpBuff: hasArmorerBuff,
+    armorerEquipmentGroup,
+    armorerShieldRim,
     backpackMesh,
     academicCapGroup,
     academicGownMesh,
@@ -11960,7 +12196,10 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         }
 
         faceTowards(unit, farm.worldCenter.x, farm.worldCenter.z, 0.3);
-        const gatherMult = unit.educationLevel >= 2 ? 1.5 : (unit.educationLevel >= 1 ? 1.25 : 1.0);
+        let gatherMult = unit.educationLevel >= 2 ? 1.5 : (unit.educationLevel >= 1 ? 1.25 : 1.0);
+        if (hasLivingAgronomist()) {
+          gatherMult *= 1.2; // Bônus de presença: +20% de velocidade de colheita em todas as fazendas
+        }
         unit.gatherTimer += delta * gatherMult;
 
         // Animação de agricultor cultivando a fazenda com a enxada
@@ -12795,8 +13034,9 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         });
 
         const courseName =
-          chosenCourse === 'ARCHITECT' ? '🏛️ Arquiteto' :
-          chosenCourse === 'AGRONOMIST' ? '🌾 Agrônomo' : '⚗️ Alquimista';
+          chosenCourse === 'ARCHITECT' ? '📐 Arquiteto' :
+          chosenCourse === 'AGRONOMIST' ? '🌾 Agrônomo' :
+          chosenCourse === 'ARMORER' ? '🛡️ Armeiro' : '⚗️ Alquimista';
         spawnFloatingText(college.worldCenter.clone().setY(3.0), `📜 Matriculado em ${courseName}!`, '#facc15');
         updateCollegeHUD();
       }
@@ -13054,6 +13294,8 @@ function killUnit(unit: RTSUnit, now: number) {
     }
   }
 
+  updateSwordsmenArmorerBuff();
+  updateResourceHUD();
   checkGameOverConditions();
 }
 
@@ -13078,7 +13320,12 @@ function executeAttack(attacker: RTSUnit, target: RTSUnit, now: number) {
   // 2. Aplicação de dano (Alquimista: Dano ígneo incendiário aumentado; Tropas aliadas ganham armas incendiárias com Alquimista)
   const isAlchemist = attacker.educationLevel >= 2 && attacker.eliteSpecialization === 'ALCHEMIST';
   const hasIncendiaryTech = attacker.faction === 'PLAYER' && hasPlayerAlchemist();
-  const dmg = isAlchemist ? attacker.damage + 4 : (hasIncendiaryTech && attacker.unitType === 'SWORDSMAN' ? attacker.damage + 2 : attacker.damage);
+  const rawDamage = isAlchemist ? attacker.damage + 4 : (hasIncendiaryTech && attacker.unitType === 'SWORDSMAN' ? attacker.damage + 2 : attacker.damage);
+  let effectiveDamage = rawDamage;
+  if (((target.faction as string) === 'ALLIED' || !target.isEnemy) && (target.unitType === 'SWORDSMAN' || (target as any).type === 'SWORDSMAN') && hasLivingArmorer()) {
+    effectiveDamage = Math.max(1, Math.round(rawDamage * 0.75)); // Absorve 25% do impacto
+  }
+  const dmg = effectiveDamage;
   target.hp = Math.max(0, target.hp - dmg);
   target.hpBarShowUntil = now + 4000;
   updateUnitHpBar(target, now);
@@ -13854,6 +14101,15 @@ btnBuildArchery?.addEventListener('click', (e) => {
 btnBuildTower?.addEventListener('click', (e) => {
   e.stopPropagation();
   soundManager.uiClick();
+  if (!hasLivingArchitect()) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(
+      new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+      '⚠️ Você precisa de um Arquiteto para projetar Torres de Vigia!',
+      '#ef4444'
+    );
+    return;
+  }
   if (isPlacementMode && currentPlacementType === 'TOWER') {
     exitPlacementMode();
   } else {
@@ -13904,6 +14160,15 @@ btnBuildMill?.addEventListener('click', (e) => {
 btnBuildFarm?.addEventListener('click', (e) => {
   e.stopPropagation();
   soundManager.uiClick();
+  if (!hasLivingAgronomist()) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(
+      new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+      '⚠️ Você precisa de um Agrônomo para planejar terras cultiváveis!',
+      '#ef4444'
+    );
+    return;
+  }
   if (isPlacementMode && currentPlacementType === 'FARM') {
     exitPlacementMode();
   } else {
@@ -14381,6 +14646,15 @@ window.addEventListener('keydown', (e) => {
 
   // Atalho W para construir Torre de Vigia
   if (e.key.toLowerCase() === 'w') {
+    if (!hasLivingArchitect()) {
+      soundManager.popCappedAlert();
+      spawnFloatingText(
+        new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+        '⚠️ Você precisa de um Arquiteto para projetar Torres de Vigia!',
+        '#ef4444'
+      );
+      return;
+    }
     if (isPlacementMode && currentPlacementType === 'TOWER') {
       exitPlacementMode();
     } else {
@@ -14458,6 +14732,15 @@ window.addEventListener('keydown', (e) => {
 
   // Atalho F para construir Fazenda (Farm)
   if (e.key.toLowerCase() === 'f') {
+    if (!hasLivingAgronomist()) {
+      soundManager.popCappedAlert();
+      spawnFloatingText(
+        new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+        '⚠️ Você precisa de um Agrônomo para planejar terras cultiváveis!',
+        '#ef4444'
+      );
+      return;
+    }
     if (isPlacementMode && currentPlacementType === 'FARM') {
       exitPlacementMode();
     } else {
@@ -17594,6 +17877,9 @@ if (minimapCanvas) {
   placeGate,
   hasLivingArchitect,
   getLivingArchitectsCount,
+  hasLivingAgronomist,
+  hasLivingArmorer,
+  updateSwordsmenArmorerBuff,
   commandEnrollInSchool,
   commandEnrollInCollege,
   graduateStudent,
@@ -18099,13 +18385,24 @@ function animate() {
     updateColleges(delta);
     updateGates(delta);
 
-    // Cancelamento imediato de fortificações caso o último arquiteto tenha morrido
-    if (isPlacementMode && (currentPlacementType === 'WALL' || currentPlacementType === 'GATE') && !hasLivingArchitect()) {
+    // Cancelamento imediato de fortificações e torres caso o último arquiteto tenha morrido
+    if (isPlacementMode && (currentPlacementType === 'WALL' || currentPlacementType === 'GATE' || currentPlacementType === 'TOWER') && !hasLivingArchitect()) {
       exitPlacementMode();
       soundManager.popCappedAlert();
       spawnFloatingText(
         new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
-        '⚠️ O Arquiteto foi abatido! Fortificações bloqueadas.',
+        '⚠️ O Arquiteto foi abatido! Fortificações e torres bloqueadas.',
+        '#ef4444'
+      );
+    }
+
+    // Cancelamento imediato de fazendas caso o último agrônomo tenha morrido
+    if (isPlacementMode && currentPlacementType === 'FARM' && !hasLivingAgronomist()) {
+      exitPlacementMode();
+      soundManager.popCappedAlert();
+      spawnFloatingText(
+        new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z),
+        '⚠️ O Agrônomo foi abatido! Planejamento de terras cultiváveis bloqueado.',
         '#ef4444'
       );
     }
@@ -18363,7 +18660,13 @@ function animate() {
         if (proj.targetType === 'UNIT') {
           const u = proj.targetUnit;
           if (u && u.hp > 0 && !u.isDying) {
-            u.hp = Math.max(0, u.hp - proj.damage);
+            const rawDamage = proj.damage;
+            let effectiveDamage = rawDamage;
+            if (((u.faction as string) === 'ALLIED' || !u.isEnemy) && (u.unitType === 'SWORDSMAN' || (u as any).type === 'SWORDSMAN') && hasLivingArmorer()) {
+              effectiveDamage = Math.max(1, Math.round(rawDamage * 0.75)); // Absorve 25% do impacto
+            }
+            const dmg = effectiveDamage;
+            u.hp = Math.max(0, u.hp - dmg);
             u.hpBarShowUntil = now + 4000;
             updateUnitHpBar(u, now);
 
@@ -18376,7 +18679,7 @@ function animate() {
               }
             }, 90);
 
-            spawnFloatingText(currentTargetPos.clone().setY(1.3), `-${proj.damage}`, '#ef4444');
+            spawnFloatingText(currentTargetPos.clone().setY(1.3), `-${dmg}`, '#ef4444');
 
             if (u.faction === 'PLAYER') {
               callAlliedSoldiersForHelp(u.group.position, proj.attacker, 8.0);

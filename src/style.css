@@ -1131,6 +1131,23 @@ canvas {
   text-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
 }
 
+.perk-tag.tag-armorer-special,
+.perk-tag.tag-armorer-shield {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.28), rgba(202, 138, 4, 0.18));
+  border: 1px solid rgba(234, 179, 8, 0.7);
+  color: #facc15;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.2);
+}
+
+.perk-tag.tag-armorer-buff {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25), rgba(220, 38, 38, 0.15));
+  border: 1px solid rgba(239, 68, 68, 0.6);
+  color: #f87171;
+  font-weight: 700;
+}
+
 .build-icon {
   font-size: 24px;
   line-height: 1;
