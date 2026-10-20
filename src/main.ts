@@ -38,7 +38,9 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1e24);
 scene.fog = new THREE.FogExp2(0x1a1e24, 0.007);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+export const isMobileDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+const renderer = new THREE.WebGLRenderer({ antialias: !isMobileDevice, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -53,8 +55,8 @@ scene.add(hemiLight);
 const sunLight = new THREE.DirectionalLight(0xfffaec, 1.45);
 sunLight.position.set(35, 55, 25);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.width = 2048;
-sunLight.shadow.mapSize.height = 2048;
+sunLight.shadow.mapSize.width = isMobileDevice ? 1024 : 2048;
+sunLight.shadow.mapSize.height = isMobileDevice ? 1024 : 2048;
 sunLight.shadow.camera.near = 10;
 sunLight.shadow.camera.far = 160;
 sunLight.shadow.camera.left = -35;
@@ -110,10 +112,14 @@ export interface MatchConfig {
   mapSize: number;         // padrão 50 (30, 50, 80)
   revealWholeMap: boolean; // padrão false (100% visão sem névoa)
   peacefulMode: boolean;   // padrão false (sem facção ou tropas inimigas)
+  aiDifficulty?: 'EASY' | 'MEDIUM' | 'HARD'; // Dificuldade da IA inimiga
   schoolStudyDurationSec: number; // padrão 120 (tempo de estudo para se formar na escola)
   collegeStudyDurationSec: number; // padrão 240 (tempo de estudo de elite na faculdade)
   invasionIntervalMinutes: number; // padrão 3.0 (min: 1.0, max: 10.0)
 }
+
+export type AIDifficulty = 'EASY' | 'MEDIUM' | 'HARD';
+export let currentAIDifficulty: AIDifficulty = 'MEDIUM';
 
 export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   townCenterHp: 400,
@@ -131,6 +137,7 @@ export const DEFAULT_MATCH_CONFIG: MatchConfig = {
   mapSize: 50,
   revealWholeMap: false,
   peacefulMode: false,
+  aiDifficulty: 'MEDIUM',
   schoolStudyDurationSec: 120,
   collegeStudyDurationSec: 240,
   invasionIntervalMinutes: 3.0
@@ -546,8 +553,21 @@ export function isCellWalkable(gridX: number, gridZ: number): boolean {
 }
 
 export function setCellWalkable(gridX: number, gridZ: number, walkable: boolean): void {
-  if (isCellInside(gridX, gridZ)) {
-    gridOccupancy[gridX + HALF_GRID][gridZ + HALF_GRID] = walkable;
+  if (!isCellInside(gridX, gridZ)) return;
+  gridOccupancy[gridX + HALF_GRID][gridZ + HALF_GRID] = walkable;
+}
+
+export const blockedGridTiles = new Set<string>();
+
+export function setWallCellOccupancy(gridX: number, gridZ: number, isBlocked: boolean): void {
+  const x = Math.round(gridX);
+  const z = Math.round(gridZ);
+  setCellWalkable(x, z, !isBlocked);
+  const key = `${x},${z}`;
+  if (isBlocked) {
+    blockedGridTiles.add(key);
+  } else {
+    blockedGridTiles.delete(key);
   }
 }
 
@@ -2015,7 +2035,7 @@ function createWallBlock(gridX: number, gridZ: number): THREE.Group {
   wallGroup.add(cren2);
 
   scene.add(wallGroup);
-  setCellWalkable(gridX, gridZ, false);
+  setWallCellOccupancy(gridX, gridZ, true);
   const wallObj: WallBlock = { gridX, gridZ, group: wallGroup };
   if (isStoneWallReinforced) {
     addReinforcementDecorToWall(wallObj);
@@ -2312,6 +2332,7 @@ function clearMapObstacles(): void {
   goldMinesMap.clear();
 
   for (const wall of wallsList) {
+    setWallCellOccupancy(wall.gridX, wall.gridZ, false);
     scene.remove(wall.group);
     wall.group.traverse((c) => {
       if (c instanceof THREE.Mesh || c instanceof THREE.LineSegments) c.geometry.dispose();
@@ -2481,7 +2502,11 @@ export function findPath(startGrid: THREE.Vector2, rawTargetGrid: THREE.Vector2,
       if (Math.abs(getCellHeight(current.x, current.z) - getCellHeight(nx, nz)) > 1.0) continue;
 
       if (dir.dx !== 0 && dir.dz !== 0) {
-        if (!isCellWalkableForPath(current.x + dir.dx, current.z, faction) || !isCellWalkableForPath(current.x, current.z + dir.dz, faction)) {
+        // Bloqueio de corte de quina (Corner-Cutting): se (current.x + dx, current.z) OU (current.x, current.z + dz)
+        // for obstáculo (como uma muralha), a passagem diagonal é terminantemente proibida.
+        const c1Walkable = isCellWalkableForPath(current.x + dir.dx, current.z, faction);
+        const c2Walkable = isCellWalkableForPath(current.x, current.z + dir.dz, faction);
+        if (!c1Walkable || !c2Walkable) {
           continue;
         }
       }
@@ -6326,7 +6351,7 @@ function createWallFoundation(gridX: number, gridZ: number, faction: UnitFaction
   }
 
   scene.add(group);
-  setCellWalkable(gridX, gridZ, false);
+  setWallCellOccupancy(gridX, gridZ, true);
 
   const isArchitect = hasLivingArchitect();
   const maxHp = isArchitect ? Math.round(WALL_HP * 1.3) : WALL_HP;
@@ -6567,6 +6592,8 @@ function createGateFoundation(gridX: number, gridZ: number, faction: UnitFaction
   scene.add(group);
   setCellWalkable(gridX, gridZ, false);
   setCellWalkable(gridX + 1, gridZ, false);
+  setWallCellOccupancy(gridX, gridZ, true);
+  setWallCellOccupancy(gridX + 1, gridZ, true);
 
   const isArchitect = hasLivingArchitect();
   const maxHp = isArchitect ? Math.round(GATE_HP * 1.3) : GATE_HP;
@@ -6710,6 +6737,8 @@ function createGhostGate(): THREE.Group {
 }
 
 function updateGates(delta: number): void {
+  const GATE_OPEN_RADIUS = 3.5;
+
   for (const b of buildingsList) {
     if (b.type !== 'GATE' || !b.isCompleted) continue;
 
@@ -6719,15 +6748,22 @@ function updateGates(delta: number): void {
     }
 
     const gateCenter = b.worldCenter;
-    const hasNearbyAlly = unitsList.some(
-      (u) =>
-        u.faction === b.faction &&
-        !u.isDying &&
-        u.hp > 0 &&
-        Math.hypot(u.group.position.x - gateCenter.x, u.group.position.z - gateCenter.z) <= 2.2
-    );
 
-    const targetProgress = hasNearbyAlly ? 1.0 : 0.0;
+    // Filtra APENAS unidades vivas pertencentes à mesma facção do portão
+    const hasFriendlyNearby = unitsList.some((u) => {
+      if (u.isDying || u.hp <= 0) return false;
+      const dist = Math.hypot(u.group.position.x - gateCenter.x, u.group.position.z - gateCenter.z);
+      if (dist > GATE_OPEN_RADIUS) return false;
+
+      // Portão aliado só abre para aliados; portão inimigo só abre para inimigos
+      return (
+        u.faction === b.faction ||
+        (b.faction === 'PLAYER' && u.faction !== 'ENEMY') ||
+        (b.faction === 'ENEMY' && u.faction === 'ENEMY')
+      );
+    });
+
+    const targetProgress = hasFriendlyNearby ? 1.0 : 0.0;
     if (b.gateOpenProgress === undefined) b.gateOpenProgress = 0;
 
     const prevProgress = b.gateOpenProgress;
@@ -6752,6 +6788,8 @@ function updateGates(delta: number): void {
     if (isNowOpen !== wasOpen) {
       setCellWalkable(b.gridX, b.gridZ, isNowOpen);
       setCellWalkable(b.gridX + 1, b.gridZ, isNowOpen);
+      setWallCellOccupancy(b.gridX, b.gridZ, !isNowOpen);
+      setWallCellOccupancy(b.gridX + 1, b.gridZ, !isNowOpen);
     }
   }
 }
@@ -6759,6 +6797,7 @@ function updateGates(delta: number): void {
 function destroyWall(wall: ConstructionBuilding): void {
   scene.remove(wall.group);
   setCellWalkable(wall.gridX, wall.gridZ, true);
+  setWallCellOccupancy(wall.gridX, wall.gridZ, false);
   buildingsGridMap.delete(cellKey(wall.gridX, wall.gridZ));
   const idx = buildingsList.indexOf(wall);
   if (idx !== -1) buildingsList.splice(idx, 1);
@@ -6773,6 +6812,8 @@ function destroyGate(gate: ConstructionBuilding): void {
   scene.remove(gate.group);
   setCellWalkable(gate.gridX, gate.gridZ, true);
   setCellWalkable(gate.gridX + 1, gate.gridZ, true);
+  setWallCellOccupancy(gate.gridX, gate.gridZ, false);
+  setWallCellOccupancy(gate.gridX + 1, gate.gridZ, false);
   buildingsGridMap.delete(cellKey(gate.gridX, gate.gridZ));
   buildingsGridMap.delete(cellKey(gate.gridX + 1, gate.gridZ));
   const idx = buildingsList.indexOf(gate);
@@ -8551,7 +8592,7 @@ let selectedBuilding: ConstructionBuilding | null = null;
 export let isTownCenterSelected = false;
 
 // --- BALÕES FLUTUANTES (POPOVERS) DO HUD ---
-const btnToggleEngineSettings = document.getElementById('btn-toggle-engine-settings') as HTMLButtonElement | null;
+const btnToggleEngineSettings = (document.getElementById('btn-open-settings') || document.getElementById('btn-toggle-engine-settings')) as HTMLButtonElement | null;
 const engineSettingsPopoverEl = document.getElementById('engine-settings-popover');
 const btnCloseEnginePopover = document.getElementById('btn-close-engine-popover');
 const triggerMapSizeBadgeEl = document.getElementById('trigger-map-size-badge');
@@ -8670,11 +8711,11 @@ export function toggleControlsPopover(): void {
   }
 }
 
-// Eventos de clique para abrir/fechar balões
+// Eventos de clique para abrir/fechar balões e configurações
 btnToggleEngineSettings?.addEventListener('click', (e) => {
   e.stopPropagation();
   soundManager.uiClick();
-  toggleEnginePopover();
+  openMatchConfigModal();
 });
 
 btnCloseEnginePopover?.addEventListener('click', (e) => {
@@ -8695,10 +8736,55 @@ btnCloseControlsPopover?.addEventListener('click', (e) => {
   closeControlsPopover();
 });
 
-// --- SISTEMA DE ÁUDIO PROCEDURAL (SOUND MANAGER) ---
+// --- SISTEMA DE ÁUDIO & CONFIGURAÇÕES DE INTERFACE ---
 const btnToggleAudioMute = document.getElementById('btn-toggle-audio-mute') as HTMLButtonElement | null;
 const audioMuteIconEl = document.getElementById('audio-mute-icon');
 const audioMuteLabelEl = document.getElementById('audio-mute-label');
+
+const cfgSoundEnabled = document.getElementById('cfg-sound-enabled') as HTMLInputElement | null;
+const valCfgSoundStatus = document.getElementById('val-cfg-sound-status');
+const lblSoundEnabled = document.getElementById('lbl-sound-enabled');
+const cfgSoundVolume = document.getElementById('cfg-sound-volume') as HTMLInputElement | null;
+const valCfgSoundVolume = document.getElementById('val-cfg-sound-volume');
+const popoverChkSound = document.getElementById('popover-chk-sound') as HTMLInputElement | null;
+
+// Controles dedicados no Modal de Configurações
+const btnToggleSoundSettings = document.getElementById('btn-toggle-sound-settings') as HTMLButtonElement | null;
+const settingsSoundIcon = document.getElementById('settings-sound-icon');
+const settingsSoundLabel = document.getElementById('settings-sound-label');
+const valSettingsSoundStatus = document.getElementById('val-settings-sound-status');
+const settingsVolumeSlider = document.getElementById('settings-volume-slider') as HTMLInputElement | null;
+const valSettingsVolume = document.getElementById('val-settings-volume');
+
+const cfgTelemetryEnabled = document.getElementById('cfg-telemetry-enabled') as HTMLInputElement | null;
+const valCfgTelemetryStatus = document.getElementById('val-cfg-telemetry-status');
+const popoverChkTelemetry = document.getElementById('popover-chk-telemetry') as HTMLInputElement | null;
+
+export function updateAudioSettingsUI(): void {
+  const isMuted = soundManager.getIsMuted();
+  const masterVol = soundManager.getMasterVolume();
+  const volPct = Math.round(masterVol * 100);
+
+  if (btnToggleSoundSettings) {
+    btnToggleSoundSettings.classList.toggle('is-muted', isMuted);
+    btnToggleSoundSettings.title = isMuted ? 'Áudio Mudo (Clique para Ativar Som)' : 'Áudio Ativo (Clique para Mutar)';
+  }
+  if (settingsSoundIcon) {
+    settingsSoundIcon.textContent = isMuted ? '🔈' : '🔊';
+  }
+  if (settingsSoundLabel) {
+    settingsSoundLabel.textContent = isMuted ? 'Efeitos Sonoros: Desativado' : 'Efeitos Sonoros: Ativado';
+  }
+  if (valSettingsSoundStatus) {
+    valSettingsSoundStatus.textContent = isMuted ? 'Desativado' : 'Ativado';
+  }
+  if (settingsVolumeSlider) {
+    settingsVolumeSlider.value = String(masterVol);
+  }
+  if (valSettingsVolume) {
+    valSettingsVolume.textContent = isMuted ? '0% (Mudo)' : `${volPct}%`;
+  }
+}
 
 function updateAudioMuteUI() {
   const isMuted = soundManager.getIsMuted();
@@ -8712,6 +8798,26 @@ function updateAudioMuteUI() {
   if (audioMuteLabelEl) {
     audioMuteLabelEl.textContent = isMuted ? 'Mudo' : 'Som';
   }
+  if (cfgSoundEnabled) {
+    cfgSoundEnabled.checked = !isMuted;
+  }
+  if (popoverChkSound) {
+    popoverChkSound.checked = !isMuted;
+  }
+  if (valCfgSoundStatus) {
+    valCfgSoundStatus.textContent = isMuted ? 'Mudo' : 'Ativado';
+  }
+  if (lblSoundEnabled) {
+    lblSoundEnabled.textContent = isMuted ? '🔈 Áudio Mutado (Silencioso)' : '🔊 Efeitos Sonoros Ativos';
+  }
+  const volPct = Math.round(soundManager.getMasterVolume() * 100);
+  if (cfgSoundVolume) {
+    cfgSoundVolume.value = String(volPct);
+  }
+  if (valCfgSoundVolume) {
+    valCfgSoundVolume.textContent = `${volPct}%`;
+  }
+  updateAudioSettingsUI();
 }
 
 updateAudioMuteUI();
@@ -8720,6 +8826,66 @@ btnToggleAudioMute?.addEventListener('click', (e) => {
   e.stopPropagation();
   soundManager.toggleMute();
   updateAudioMuteUI();
+});
+
+btnToggleSoundSettings?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  soundManager.toggleMute();
+  updateAudioMuteUI();
+});
+
+settingsVolumeSlider?.addEventListener('input', (e) => {
+  e.stopPropagation();
+  if (!settingsVolumeSlider) return;
+  const vol = parseFloat(settingsVolumeSlider.value);
+  soundManager.setMasterVolume(vol);
+  if (soundManager.getIsMuted() && vol > 0) {
+    soundManager.setMuted(false);
+  }
+  updateAudioMuteUI();
+});
+
+cfgSoundEnabled?.addEventListener('change', () => {
+  soundManager.setMuted(!cfgSoundEnabled.checked);
+  updateAudioMuteUI();
+});
+
+popoverChkSound?.addEventListener('change', () => {
+  soundManager.setMuted(!popoverChkSound.checked);
+  updateAudioMuteUI();
+});
+
+cfgSoundVolume?.addEventListener('input', () => {
+  if (!cfgSoundVolume) return;
+  const vol = Number(cfgSoundVolume.value) / 100;
+  soundManager.setMasterVolume(vol);
+  if (valCfgSoundVolume) valCfgSoundVolume.textContent = `${cfgSoundVolume.value}%`;
+  if (soundManager.getIsMuted() && vol > 0) {
+    soundManager.setMuted(false);
+  }
+  updateAudioMuteUI();
+});
+
+export function setTelemetryActive(active: boolean): void {
+  document.body.classList.toggle('show-telemetry-on-demand', active);
+  const p = document.getElementById('telemetry-panel');
+  if (active && p) {
+    p.classList.remove('is-collapsed');
+  }
+  if (cfgTelemetryEnabled) cfgTelemetryEnabled.checked = active;
+  if (popoverChkTelemetry) popoverChkTelemetry.checked = active;
+  if (valCfgTelemetryStatus) valCfgTelemetryStatus.textContent = active ? 'Visível' : 'Oculto';
+  try {
+    localStorage.setItem('rts_telemetry_visible', String(active));
+  } catch {}
+}
+
+cfgTelemetryEnabled?.addEventListener('change', () => {
+  if (cfgTelemetryEnabled) setTelemetryActive(cfgTelemetryEnabled.checked);
+});
+
+popoverChkTelemetry?.addEventListener('change', () => {
+  if (popoverChkTelemetry) setTelemetryActive(popoverChkTelemetry.checked);
 });
 
 // Desbloqueia e inicializa o AudioContext no primeiro gesto do usuário
@@ -9084,6 +9250,21 @@ export function updateBuildingSelectedHUD(building: ConstructionBuilding) {
   }
 }
 
+function updateDeselectButtonVisibility(): void {
+  const btn = document.getElementById('btn-deselect-current');
+  if (!btn) return;
+  let hasUnits = false;
+  try {
+    if (typeof unitsList !== 'undefined' && Array.isArray(unitsList)) {
+      hasUnits = unitsList.some((u) => u.isSelected);
+    }
+  } catch (_) {
+    hasUnits = false;
+  }
+  const hasSelection = hasUnits || selectedBuilding !== null || isTownCenterSelected;
+  btn.style.display = hasSelection ? 'inline-flex' : 'none';
+}
+
 function selectTownCenter() {
   soundManager.uiClick();
   deselectAllUnits();
@@ -9101,12 +9282,14 @@ function selectTownCenter() {
   updateTownCenterSelectedHUD();
   updateTownCenterRallyHUD();
   updateRallyPointVisuals();
+  updateDeselectButtonVisibility();
 }
 
 function deselectTownCenter() {
   isTownCenterSelected = false;
   if (tcHudPanelEl) tcHudPanelEl.style.display = 'none';
   updateRallyPointVisuals();
+  updateDeselectButtonVisibility();
 }
 
 function selectBuilding(building: ConstructionBuilding) {
@@ -9152,6 +9335,7 @@ function selectBuilding(building: ConstructionBuilding) {
   updateBuildingHpBar(building);
   updateBuildingRallyHUD(building);
   updateRallyPointVisuals();
+  updateDeselectButtonVisibility();
 }
 
 function deselectBuilding() {
@@ -9169,6 +9353,7 @@ function deselectBuilding() {
   if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
   deselectTownCenter();
   updateRallyPointVisuals();
+  updateDeselectButtonVisibility();
 }
 
 function updateFarmHUD() {
@@ -9837,19 +10022,53 @@ function commandEnrollInCollege(unit: RTSUnit, college: ConstructionBuilding) {
   setUnitPath(unit, frontDoorCell);
 }
 
+// Estado do card no mobile: pílula compacta (padrão) ou expandido sob demanda
+let isUnitCardExpandedMobile: boolean = false;
+let unitCardLastUnit: unknown = null;
+const unitCardMobileMQ = window.matchMedia('(max-width: 900px), (max-height: 600px)');
+
+function applyUnitCardMobileState() {
+  if (!unitCardPanelEl) return;
+  const mobile = unitCardMobileMQ.matches;
+  unitCardPanelEl.classList.toggle('mobile-collapsed', mobile && !isUnitCardExpandedMobile);
+  unitCardPanelEl.classList.toggle('mobile-expanded', mobile && isUnitCardExpandedMobile);
+  const toggleBtn = document.getElementById('btn-toggle-unit-card');
+  if (toggleBtn) {
+    toggleBtn.textContent = isUnitCardExpandedMobile ? '▾' : 'ℹ️';
+    toggleBtn.setAttribute('aria-expanded', String(isUnitCardExpandedMobile));
+  }
+}
+
+unitCardPanelEl?.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement;
+  if (target.closest('#btn-close-unit-card') || target.closest('.btn-action')) return;
+  if (!unitCardMobileMQ.matches) return;
+  isUnitCardExpandedMobile = !isUnitCardExpandedMobile;
+  applyUnitCardMobileState();
+});
+unitCardMobileMQ.addEventListener('change', applyUnitCardMobileState);
+
 function updateUnitHUD() {
+  updateDeselectButtonVisibility();
   if (!unitCardPanelEl) return;
   const selected = getSelectedUnits();
   if (selected.length !== 1) {
     unitCardPanelEl.style.display = 'none';
+    unitCardLastUnit = null;
     return;
   }
   const unit = selected[0];
   if (unit.isDying || unit.isGarrisoned) {
     unitCardPanelEl.style.display = 'none';
+    unitCardLastUnit = null;
     return;
   }
 
+  if (unitCardLastUnit !== unit) {
+    unitCardLastUnit = unit;
+    isUnitCardExpandedMobile = false;
+    applyUnitCardMobileState();
+  }
   unitCardPanelEl.style.display = 'flex';
   if (unitCardAvatarEl) {
     if (unit.unitType === 'SWORDSMAN') {
@@ -10327,8 +10546,11 @@ function createCornerAccents(): THREE.LineSegments {
 markerGroup.add(createCornerAccents());
 
 function setPointerNDC(clientX: number, clientY: number) {
-  pointerNDC.x = (clientX / window.innerWidth) * 2 - 1;
-  pointerNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const width = rect.width || window.innerWidth;
+  const height = rect.height || window.innerHeight;
+  pointerNDC.x = ((clientX - rect.left) / width) * 2 - 1;
+  pointerNDC.y = -((clientY - rect.top) / height) * 2 + 1;
   raycaster.setFromCamera(pointerNDC, camera);
 }
 
@@ -11632,6 +11854,102 @@ function getSelectedUnits(): RTSUnit[] {
   return unitsList.filter((u) => u.isSelected);
 }
 
+/**
+ * Busca por proximidade de coordenada no grid (Proximity Hit-Test)
+ * Encontra a unidade mais próxima das coordenadas do solo até um raio configurado (padrão 0.85 células).
+ */
+export function findUnitNearGroundPoint(groundX: number, groundZ: number, maxRadius = 0.85): RTSUnit | null {
+  let bestUnit: RTSUnit | null = null;
+  let minDistance = maxRadius;
+
+  const selectableUnits = unitsList.filter((u) => !u.isGarrisoned && !u.isDying && (u.faction === 'PLAYER' || u.group.visible));
+
+  // 1. Prioriza unidades aliadas (PLAYER) vivas primeiro
+  for (const unit of selectableUnits) {
+    if (unit.faction !== 'PLAYER' || unit.hp <= 0 || unit.isDying) continue;
+    const uX = unit.gridX ?? unit.group.position.x;
+    const uZ = unit.gridZ ?? unit.group.position.z;
+    const distPos = Math.hypot(unit.group.position.x - groundX, unit.group.position.z - groundZ);
+    const distGrid = Math.hypot(uX - groundX, uZ - groundZ);
+    const distTile = Math.hypot(Math.floor(unit.group.position.x) + 0.5 - groundX, Math.floor(unit.group.position.z) + 0.5 - groundZ);
+    const dist = Math.min(distPos, distGrid, distTile);
+
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestUnit = unit;
+    }
+  }
+
+  if (bestUnit) return bestUnit;
+
+  // 2. Se não houver aliada no raio, verifica unidades inimigas visíveis
+  for (const unit of selectableUnits) {
+    if (unit.faction === 'PLAYER' || unit.hp <= 0 || unit.isDying) continue;
+    const uX = unit.gridX ?? unit.group.position.x;
+    const uZ = unit.gridZ ?? unit.group.position.z;
+    const distPos = Math.hypot(unit.group.position.x - groundX, unit.group.position.z - groundZ);
+    const distGrid = Math.hypot(uX - groundX, uZ - groundZ);
+    const distTile = Math.hypot(Math.floor(unit.group.position.x) + 0.5 - groundX, Math.floor(unit.group.position.z) + 0.5 - groundZ);
+    const dist = Math.min(distPos, distGrid, distTile);
+
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestUnit = unit;
+    }
+  }
+
+  return bestUnit;
+}
+
+/**
+ * Raycaster com tolerância expandida para unidades (Direct Raycast + Proximity Hit-Test)
+ */
+export function findUnitUnderPointer(clientX: number, clientY: number): RTSUnit | null {
+  setPointerNDC(clientX, clientY);
+  const selectableUnits = unitsList.filter((u) => !u.isGarrisoned && !u.isDying && (u.faction === 'PLAYER' || u.group.visible));
+  if (selectableUnits.length === 0) return null;
+
+  // 1. Raycast direto nas malhas dos cilindros das unidades
+  const cylinderHits = raycaster.intersectObjects(selectableUnits.map((u) => u.cylinderMesh), false);
+  if (cylinderHits.length > 0) {
+    const hitUnit = selectableUnits.find((u) => u.cylinderMesh === cylinderHits[0].object);
+    if (hitUnit) return hitUnit;
+  }
+
+  // 1.1 Raycast direto nas malhas dos grupos das unidades (corpo, ferramentas, chapéu)
+  const groupHits = raycaster.intersectObjects(selectableUnits.map((u) => u.group), true);
+  if (groupHits.length > 0) {
+    for (const h of groupHits) {
+      const hitUnit = selectableUnits.find(
+        (u) => u.group === h.object || u.group.children.includes(h.object) || u.cylinderMesh === h.object
+      );
+      if (hitUnit) return hitUnit;
+    }
+  }
+
+  // 2. Proximity Hit-Test expandido no chão para toque capacitivo (0.85 células de raio)
+  let groundX = 0;
+  let groundZ = 0;
+  let hasGround = false;
+
+  const groundHits = raycaster.intersectObject(groundMesh, false);
+  if (groundHits.length > 0) {
+    groundX = groundHits[0].point.x;
+    groundZ = groundHits[0].point.z;
+    hasGround = true;
+  } else if (raycaster.ray.intersectPlane(groundPlane, groundIntersect)) {
+    groundX = groundIntersect.x;
+    groundZ = groundIntersect.z;
+    hasGround = true;
+  }
+
+  if (hasGround) {
+    return findUnitNearGroundPoint(groundX, groundZ, 0.85);
+  }
+
+  return null;
+}
+
 function clearAllUnits() {
   unitsList.forEach((u) => scene.remove(u.group));
   unitsList.length = 0;
@@ -11661,6 +11979,63 @@ function faceTowards(unit: RTSUnit, x: number, z: number, t = 0.25) {
   unit.group.rotation.y = lerpAngle(unit.group.rotation.y, angle, t);
 }
 
+function resolveWallCollision(unit: RTSUnit): void {
+  const uPosX = unit.group.position.x;
+  const uPosZ = unit.group.position.z;
+
+  const minX = Math.floor(uPosX - 0.6);
+  const maxX = Math.ceil(uPosX + 0.6);
+  const minZ = Math.floor(uPosZ - 0.6);
+  const maxZ = Math.ceil(uPosZ + 0.6);
+
+  let collisionOccurred = false;
+
+  for (let x = minX; x <= maxX; x++) {
+    for (let z = minZ; z <= maxZ; z++) {
+      // Verifica se a célula contém uma muralha de pedra
+      const key = `${x},${z}`;
+      const isWallTile = blockedGridTiles.has(key);
+      const b = buildingsGridMap.get(cellKey(x, z));
+      const isWallBuilding = b && b.type === 'WALL' && !b.isDepleted && (b.hp === undefined || b.hp > 0);
+      const isStaticWall = wallsList.some((w) => w.gridX === x && w.gridZ === z);
+
+      if (isWallTile || isWallBuilding || isStaticWall) {
+        // Clamping de colisão: empurra a unidade para fora do bounding box da muralha (0.9x0.9)
+        const cellCenterX = x + 0.5;
+        const cellCenterZ = z + 0.5;
+        const halfSize = 0.48;
+
+        const clampedX = Math.max(cellCenterX - halfSize, Math.min(cellCenterX + halfSize, unit.group.position.x));
+        const clampedZ = Math.max(cellCenterZ - halfSize, Math.min(cellCenterZ + halfSize, unit.group.position.z));
+
+        const diffX = unit.group.position.x - clampedX;
+        const diffZ = unit.group.position.z - clampedZ;
+        const dist = Math.hypot(diffX, diffZ);
+        const unitRadius = 0.32;
+
+        if (dist < unitRadius && dist > 0.0001) {
+          const overlap = unitRadius - dist;
+          unit.group.position.x += (diffX / dist) * overlap;
+          unit.group.position.z += (diffZ / dist) * overlap;
+          collisionOccurred = true;
+        } else if (dist <= 0.0001) {
+          // Unidade está exatamente no centro ou na borda clamped: empurra para longe do centro da célula
+          const pushX = unit.group.position.x - cellCenterX || 1;
+          const pushZ = unit.group.position.z - cellCenterZ || 0;
+          const pDist = Math.hypot(pushX, pushZ) || 1;
+          unit.group.position.x += (pushX / pDist) * 0.1;
+          unit.group.position.z += (pushZ / pDist) * 0.1;
+          collisionOccurred = true;
+        }
+      }
+    }
+  }
+
+  if (collisionOccurred) {
+    unit.group.position.y = getTerrainHeight(unit.group.position.x, unit.group.position.z);
+  }
+}
+
 function moveAlongPath(unit: RTSUnit, delta: number): boolean {
   if (unit.currentWaypointIndex >= unit.waypoints.length) return true;
 
@@ -11677,6 +12052,7 @@ function moveAlongPath(unit: RTSUnit, delta: number): boolean {
   const step = Math.min(dist, unit.speed * delta);
   unit.group.position.x += (dx / dist) * step;
   unit.group.position.z += (dz / dist) * step;
+  resolveWallCollision(unit);
   unit.group.position.y = getTerrainHeight(unit.group.position.x, unit.group.position.z);
   faceTowards(unit, wp.x, wp.z);
   return false;
@@ -12437,7 +12813,8 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         }
 
         faceTowards(unit, mine.gridX + 0.5, mine.gridZ + 0.5, 0.3);
-        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0);
+        const aiRate = unit.faction === 'ENEMY' ? (currentAIDifficulty === 'EASY' ? 0.55 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0)) : 1.0;
+        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0) * aiRate;
 
         // Animação de picaretada vigorosa (balanço rápido de cima para baixo)
         const pickSwing = Math.sin(unit.gatherTimer * Math.PI * 3.5);
@@ -12537,7 +12914,8 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
 
         faceTowards(unit, bush.gridX + 0.5, bush.gridZ + 0.5, 0.3);
         const gatherMult = unit.educationLevel >= 2 ? 1.5 : (unit.educationLevel >= 1 ? 1.25 : 1.0);
-        unit.gatherTimer += delta * gatherMult;
+        const aiRate = unit.faction === 'ENEMY' ? (currentAIDifficulty === 'EASY' ? 0.55 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0)) : 1.0;
+        unit.gatherTimer += delta * gatherMult * aiRate;
 
         // Animação sutil de colheita/agachar (movimento vertical + inclinação leve)
         const forageBob = Math.sin(unit.gatherTimer * Math.PI * 4);
@@ -12573,7 +12951,8 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         }
 
         faceTowards(unit, mine.gridX + 0.5, mine.gridZ + 0.5, 0.3);
-        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0);
+        const aiRate = unit.faction === 'ENEMY' ? (currentAIDifficulty === 'EASY' ? 0.55 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0)) : 1.0;
+        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0) * aiRate;
 
         // Animação de picaretada vigorosa (balanço rápido de cima para baixo)
         const pickSwing = Math.sin(unit.gatherTimer * Math.PI * 3.5);
@@ -12618,7 +12997,8 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         }
 
         faceTowards(unit, tree.gridX + 0.5, tree.gridZ + 0.5, 0.3);
-        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0);
+        const aiRate = unit.faction === 'ENEMY' ? (currentAIDifficulty === 'EASY' ? 0.55 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0)) : 1.0;
+        unit.gatherTimer += delta * (unit.educationLevel >= 1 ? 1.25 : 1.0) * aiRate;
 
         const swing = Math.sin(unit.gatherTimer * Math.PI * 3);
         unit.cylinderMesh.rotation.x = Math.max(0, swing) * 0.38;
@@ -12881,6 +13261,7 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         building.group.visible = isDiscovered;
 
         if (building.type === 'WALL') {
+          setWallCellOccupancy(building.gridX, building.gridZ, true);
           try {
             updateWallConnections(building);
           } catch (e) {
@@ -12890,6 +13271,12 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
           building.group.visible = true;
           building.finishedGroup.scale.set(1, 1, 1);
         } else if (building.type === 'GATE') {
+          if (!building.gateOpenProgress || building.gateOpenProgress < 0.5) {
+            setCellWalkable(building.gridX, building.gridZ, false);
+            setCellWalkable(building.gridX + 1, building.gridZ, false);
+            setWallCellOccupancy(building.gridX, building.gridZ, true);
+            setWallCellOccupancy(building.gridX + 1, building.gridZ, true);
+          }
           try {
             rebuildWallNeighbors(building.gridX - 1, building.gridZ);
             rebuildWallNeighbors(building.gridX + 2, building.gridZ);
@@ -13454,8 +13841,15 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
           if (unit.waypoints.length === 0) {
             const dest = findClosestWalkableCell(new THREE.Vector2(tcCoord.minX + 1, tcCoord.minZ + 1), unitCell(unit));
             setUnitPath(unit, dest);
+            if (unit.waypoints.length === 0) {
+              goIdle(unit);
+              break;
+            }
           }
-          moveAlongPath(unit, delta);
+          if (moveAlongPath(unit, delta)) {
+            // Chegou ao fim do caminho acessível pelo A*: se ainda estiver fora de alcance (ex: muralha impedindo avanço), fica em guarda (IDLE)
+            goIdle(unit);
+          }
         }
       } else if (unit.targetStructure === 'BUILDING') {
         const building = unit.targetBuilding;
@@ -14084,6 +14478,12 @@ export function commandAttackTownCenter(unit: RTSUnit) {
   if (dist > reach) {
     const dest = findClosestWalkableCell(new THREE.Vector2(tcCoord.minX + 1, tcCoord.minZ + 1), unitCell(unit));
     setUnitPath(unit, dest);
+
+    // Se o A* não gerou rota até o Town Center por haver bloqueio completo de muralhas,
+    // a unidade NÃO deve atacar as muralhas. Ela deve permanecer em guarda/patrulha no limite acessível.
+    if (unit.waypoints.length === 0) {
+      unit.state = 'IDLE';
+    }
   } else {
     unit.waypoints = [];
     unit.currentWaypointIndex = 0;
@@ -14170,20 +14570,11 @@ const selectionBoxEl = document.getElementById('selection-box')!;
 const telemetryPanelEl = document.getElementById('telemetry-panel');
 const telemetryHeaderEl = document.getElementById('telemetry-header');
 const telemetryToggleIconEl = document.getElementById('telemetry-toggle-icon');
-const telemetryCamPosEl = document.getElementById('telemetry-cam-pos');
-const telemetryFrustumEl = document.getElementById('telemetry-frustum');
 const telemetryTileEl = document.getElementById('telemetry-tile');
 const telemetryWalkableEl = document.getElementById('telemetry-walkable');
-const telemetrySelectedCountEl = document.getElementById('telemetry-selected-count');
-const telemetryWoodcuttersEl = document.getElementById('telemetry-woodcutters');
-const telemetryTreesEl = document.getElementById('telemetry-trees');
 const btnResetCam = document.getElementById('btn-reset-cam');
 const btnClearUnits = document.getElementById('btn-clear-units');
 const btnSpawnUnit = document.getElementById('btn-spawn-unit');
-
-function isTelemetryPanelCollapsed(): boolean {
-  return !telemetryPanelEl || telemetryPanelEl.classList.contains('is-collapsed');
-}
 
 // Impede que cliques na telemetria disparem seleções ou ordens no Three.js
 telemetryPanelEl?.addEventListener('pointerdown', (e) => {
@@ -14224,9 +14615,9 @@ function updateTelemetryUnitsCount() {
 
 export const updatePopulationHUD = updateTelemetryUnitsCount;
 
-function updateTelemetrySelectionCount() {
-  if (isTelemetryPanelCollapsed()) return;
-  if (telemetrySelectedCountEl) telemetrySelectedCountEl.textContent = `${getSelectedUnits().length}`;
+function updateTelemetrySelectionCount(): void {
+  // Desativado: telemetria removida da interface
+  return;
 }
 
 btnClearUnits?.addEventListener('click', (e) => {
@@ -15228,6 +15619,125 @@ document.getElementById('btn-clear-college-rally')?.addEventListener('click', (e
   }
 });
 
+// --- FULLSCREEN NATIVO & MOBILE HUD CONTROLS ---
+export function toggleFullscreen(): void {
+  try {
+    if (!document.fullscreenElement) {
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen().catch((err) => {
+          console.warn('Erro ao solicitar tela cheia:', err);
+        });
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Erro ao sair de tela cheia:', err);
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Fullscreen API error:', err);
+  }
+}
+
+document.querySelectorAll('.btn-toggle-fullscreen').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleFullscreen();
+    soundManager.uiClick();
+  });
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const isFs = !!document.fullscreenElement;
+  document.querySelectorAll('.btn-toggle-fullscreen').forEach((btn) => {
+    const icon = btn.querySelector('.fullscreen-icon, .btn-icon, .btn-menu-icon');
+    if (icon) icon.textContent = isFs ? '🗗' : '⛶';
+    const label = btn.querySelector('.btn-menu-label');
+    if (label) label.textContent = isFs ? 'Sair Tela Cheia' : 'Tela Cheia';
+  });
+});
+
+// Botão Flutuante de Alternância Tática (Toggle de Modo de Ação: [ 👆 Modo Seleção ] vs [ 🎯 Modo Comando ])
+export type MobileActionMode = 'SELECT_MOVE' | 'DIRECT_ORDER';
+export let mobileActionMode: MobileActionMode = 'SELECT_MOVE';
+
+const btnMobileActionMode = document.getElementById('btn-mobile-action-mode');
+btnMobileActionMode?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (mobileActionMode === 'SELECT_MOVE') {
+    mobileActionMode = 'DIRECT_ORDER';
+    btnMobileActionMode.classList.add('mode-direct-order');
+    btnMobileActionMode.innerHTML = '<span class="mode-icon">🎯</span><span class="mode-text">Comando</span>';
+    spawnFloatingText(new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z), '🎯 Modo: Comando (Ordem Direta / Reparar)', '#ef4444');
+  } else {
+    mobileActionMode = 'SELECT_MOVE';
+    btnMobileActionMode.classList.remove('mode-direct-order');
+    btnMobileActionMode.innerHTML = '<span class="mode-icon">👆</span><span class="mode-text">Seleção</span>';
+    spawnFloatingText(new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z), '👆 Modo: Seleção', '#38bdf8');
+  }
+  soundManager.uiClick();
+  if (navigator.vibrate) {
+    try { navigator.vibrate(25); } catch (_) {}
+  }
+});
+
+// Botão de Desmarcar Seleção Atual no HUD Mobile ([ ✕ Desmarcar ])
+const btnDeselectCurrent = document.getElementById('btn-deselect-current');
+btnDeselectCurrent?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  deselectAllUnits();
+  deselectBuilding();
+  deselectTownCenter();
+  updateDeselectButtonVisibility();
+  soundManager.uiClick();
+});
+
+// Botão Fechar no Card de Unidade
+const btnCloseUnitCard = document.getElementById('btn-close-unit-card');
+btnCloseUnitCard?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  deselectAllUnits();
+  deselectBuilding();
+  deselectTownCenter();
+  updateDeselectButtonVisibility();
+  soundManager.uiClick();
+});
+
+// Minimapa Mobile: Recolher em botão flutuante e expandir
+const btnCollapseMinimap = document.getElementById('btn-collapse-minimap');
+const btnToggleMinimapMobile = document.getElementById('btn-toggle-minimap-mobile');
+const minimapContainerEl = document.getElementById('minimap-container');
+const mobileTacticalControlsEl = document.getElementById('mobile-tactical-controls');
+
+btnCollapseMinimap?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  minimapContainerEl?.classList.add('is-collapsed');
+  mobileTacticalControlsEl?.classList.add('minimap-collapsed');
+  soundManager.uiClick();
+});
+
+btnToggleMinimapMobile?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isNowCollapsed = minimapContainerEl?.classList.toggle('is-collapsed');
+  mobileTacticalControlsEl?.classList.toggle('minimap-collapsed', !!isNowCollapsed);
+  soundManager.uiClick();
+});
+
+// Dock de Construções: Abas de Categorias (Civis, Militares, Educação, Todas)
+const dockTabButtons = document.querySelectorAll<HTMLButtonElement>('.dock-tab-btn');
+const bottomActionDockEl = document.getElementById('bottom-action-dock');
+dockTabButtons.forEach((tab) => {
+  tab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dockTabButtons.forEach((b) => b.classList.remove('active'));
+    tab.classList.add('active');
+    const cat = tab.getAttribute('data-category') || 'all';
+    bottomActionDockEl?.setAttribute('data-category', cat);
+    soundManager.uiClick();
+  });
+});
+
 window.addEventListener('keyup', (e) => {
   keys[e.key.toLowerCase()] = false;
 });
@@ -15605,7 +16115,16 @@ function handleRightClick(clientX: number, clientY: number) {
   });
 }
 
+let pointerDownPos = { x: 0, y: 0 };
+let pointerDownTime = 0;
+let lastTouchTapTime = 0;
+const TOUCH_DRAG_THRESHOLD = 14;
+
 window.addEventListener('pointerdown', (e) => {
+  pointerDownPos = { x: e.clientX, y: e.clientY };
+  pointerDownTime = performance.now();
+
+  if (e.pointerType === 'touch') return;
   if ((e.target as HTMLElement).closest('.ui-overlay') || (e.target as HTMLElement).closest('.match-config-modal')) return;
   if ((isGameOver || isMatchConfigModalOpen) && e.button !== 1) return;
 
@@ -15669,6 +16188,7 @@ window.addEventListener('pointerdown', (e) => {
 });
 
 window.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') return;
   mousePos.x = e.clientX;
   mousePos.y = e.clientY;
   isMouseInsideWindow = true;
@@ -15695,7 +16215,7 @@ window.addEventListener('pointermove', (e) => {
     return;
   }
 
-  if (isLeftMouseDown && !isPlacementMode && Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 5) {
+  if (isLeftMouseDown && !isPlacementMode && Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 10) {
     isLeftDragging = true;
     const minX = Math.min(dragStartX, e.clientX);
     const minY = Math.min(dragStartY, e.clientY);
@@ -15710,6 +16230,20 @@ window.addEventListener('pointermove', (e) => {
 });
 
 window.addEventListener('pointerup', (e) => {
+  const dx = e.clientX - pointerDownPos.x;
+  const dy = e.clientY - pointerDownPos.y;
+  const distSq = dx * dx + dy * dy;
+  const elapsedTime = performance.now() - pointerDownTime;
+  const isTap = distSq < (TOUCH_DRAG_THRESHOLD * TOUCH_DRAG_THRESHOLD) && elapsedTime < 350;
+
+  if (e.pointerType === 'touch') {
+    // Fallback para navegadores que emitem apenas PointerEvents (sem TouchEvents)
+    if (isTap && (performance.now() - lastTouchTapTime > 350)) {
+      lastTouchTapTime = performance.now();
+      handleQuickTap(e.clientX, e.clientY);
+    }
+    return;
+  }
   if (e.button === 0 && isPlacementMode && isDraggingWall) {
     finishWallDrag(e.shiftKey);
     return;
@@ -15746,19 +16280,7 @@ window.addEventListener('pointerup', (e) => {
       }
     } else {
       selectionBoxEl.style.display = 'none';
-      setPointerNDC(e.clientX, e.clientY);
-
-      const selectableUnits = unitsList.filter((u) => !u.isGarrisoned && !u.isDying && (u.faction === 'PLAYER' || u.group.visible));
-      const intersects = raycaster.intersectObjects(selectableUnits.map((u) => u.cylinderMesh), false);
-      let clicked: RTSUnit | null = null;
-
-      if (intersects.length > 0) {
-        clicked = selectableUnits.find((u) => u.cylinderMesh === intersects[0].object) ?? null;
-      } else if (raycaster.ray.intersectPlane(groundPlane, groundIntersect)) {
-        clicked = selectableUnits.find(
-          (u) => Math.hypot(u.group.position.x - groundIntersect.x, u.group.position.z - groundIntersect.z) < 0.6
-        ) ?? null;
-      }
+      const clicked = findUnitUnderPointer(e.clientX, e.clientY);
 
       if (clicked) {
         deselectBuilding();
@@ -15797,6 +16319,408 @@ window.addEventListener('pointerup', (e) => {
     isMiddleDragging = false;
     document.body.style.cursor = 'default';
   }
+});
+
+// ========================================================
+// SISTEMA DE ENTRADA TOUCH & GESTOS DE CÂMERA (MOBILE RTS)
+// ========================================================
+let touchStartTime = 0;
+let touchStartX = 0;
+let touchStartY = 0;
+let touchLastX = 0;
+let touchLastY = 0;
+let touchMovedDistance = 0;
+let isTouchPanning = false;
+let isTouchLongPress = false;
+let isTouchBoxSelecting = false;
+let touchLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+
+let touchInertiaActive = false;
+let touchVelocityX = 0;
+let touchVelocityY = 0;
+let lastTouchMoveTime = 0;
+
+let isPinchZooming = false;
+let lastPinchDist = 0;
+
+function getTouchesDistance(t1: Touch, t2: Touch): number {
+  const dx = t2.clientX - t1.clientX;
+  const dy = t2.clientY - t1.clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function handleQuickTap(clientX: number, clientY: number): void {
+  if (isGameOver || isMatchConfigModalOpen) return;
+
+  // 1. Placement Mode: tocar para posicionar edifício ou muro
+  if (isPlacementMode) {
+    if (currentPlacementType === 'WALL') {
+      const cell = raycastGridCell(clientX, clientY);
+      if (cell && cell.isInside) {
+        if (!isDraggingWall) {
+          isDraggingWall = true;
+          wallDragStart = { x: cell.gridX, z: cell.gridZ };
+          ghostWallGroup.visible = false;
+          updateWallDrag(cell.gridX, cell.gridZ, clientX, clientY);
+        } else {
+          finishWallDrag(false);
+        }
+      }
+      return;
+    }
+
+    const cell = raycastGridCell(clientX, clientY);
+    if (cell && cell.isInside) {
+      ghostGridX = cell.gridX;
+      ghostGridZ = cell.gridZ;
+      updateHoverMarker(clientX, clientY);
+      if (isGhostValid) {
+        if (currentPlacementType === 'GATE') placeGate(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'TOWER') placeTower(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'LUMBER_CAMP') placeLumberCamp(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'MINING_CAMP') placeMiningCamp(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'HOUSE') placeHouse(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'MILL') placeMill(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'FARM') placeFarm(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'SCHOOL') placeSchool(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'COLLEGE') placeCollege(ghostGridX, ghostGridZ, false);
+        else if (currentPlacementType === 'ARCHERY_RANGE') placeArcheryRange(ghostGridX, ghostGridZ, false);
+        else placeBarracks(ghostGridX, ghostGridZ, false);
+      }
+    }
+    return;
+  }
+
+  // 2. Unidades aliadas selecionadas atualmente
+  const selected = getSelectedUnits().filter((u) => u.faction === 'PLAYER');
+
+  // 3. PRIORIDADE 1: Seleção de Unidade (Aldeão ou Soldado) com Proximity Hit-Test de 0.85 células
+  const clickedUnit = findUnitUnderPointer(clientX, clientY);
+  if (clickedUnit) {
+    if (clickedUnit.faction === 'PLAYER') {
+      // Aldeão ou soldado aliado: sempre seleciona a unidade tocada imediatamente!
+      deselectBuilding();
+      deselectTownCenter();
+      selectSingleUnit(clickedUnit);
+      soundManager.uiClick();
+      if (navigator.vibrate) try { navigator.vibrate(25); } catch (_) {}
+      updateDeselectButtonVisibility();
+      return;
+    } else {
+      // Unidade inimiga: se houver tropas aliadas selecionadas, emite ordem de ataque (Right-Click)
+      if (selected.length > 0) {
+        handleRightClick(clientX, clientY);
+        return;
+      } else {
+        // Sem tropas selecionadas: seleciona a unidade inimiga para visualização no card
+        deselectBuilding();
+        deselectTownCenter();
+        selectSingleUnit(clickedUnit);
+        soundManager.uiClick();
+        if (navigator.vibrate) try { navigator.vibrate(20); } catch (_) {}
+        updateDeselectButtonVisibility();
+        return;
+      }
+    }
+  }
+
+  // 4. PRIORIDADE 2: Centro da Cidade Aliado sob o toque (quando NÃO há unidade tocada)
+  if (isTownCenterUnderCursor(clientX, clientY)) {
+    // Exceção (Ação Intencional de Aldeões): se danificado E em DIRECT_ORDER com aldeões selecionados
+    if (mobileActionMode === 'DIRECT_ORDER' && selected.length > 0 && isTownCenterDamaged() && selected.some((u) => u.unitType === 'VILLAGER')) {
+      handleRightClick(clientX, clientY);
+      return;
+    }
+    // Caso contrário: SEMPRE desmarca unidades anteriores e seleciona o Centro da Cidade
+    deselectAllUnits();
+    deselectBuilding();
+    selectTownCenter();
+    soundManager.uiClick();
+    updateDeselectButtonVisibility();
+    return;
+  }
+
+  // 5. PRIORIDADE 3: Edifício Aliado sob o toque (Quartel, Estábulo, Escola, Faculdade, Fazenda, etc.)
+  const building = getBuildingUnderCursor(clientX, clientY);
+  if (building) {
+    const isAllied = building.faction === 'PLAYER' || (building as any).faction === 'ALLIED' || !building.isEnemy;
+    const isCompleted = building.isCompleted && (building.progress === undefined || building.progress >= 100);
+
+    if (isAllied && isCompleted) {
+      ensureBuildingHp(building);
+      const isDamaged = (building.hp ?? 0) < (building.maxHp ?? 1);
+      // Exceção (Ação Intencional de Aldeões): apenas se danificado E explicitamente em DIRECT_ORDER com aldeões
+      if (mobileActionMode === 'DIRECT_ORDER' && selected.length > 0 && isDamaged && selected.some((u) => u.unitType === 'VILLAGER')) {
+        handleRightClick(clientX, clientY);
+        return;
+      }
+      // Prioridade de Seleção: SEMPRE desmarca unidades anteriores e seleciona o edifício imediatamente
+      deselectAllUnits();
+      deselectTownCenter();
+      selectBuilding(building);
+      soundManager.uiClick();
+      updateDeselectButtonVisibility();
+      return;
+    } else if (isAllied && !isCompleted) {
+      // Canteiro em obras: se houver aldeões selecionados, eles constroem
+      if (selected.length > 0 && selected.some((u) => u.unitType === 'VILLAGER')) {
+        handleRightClick(clientX, clientY);
+        return;
+      }
+      deselectAllUnits();
+      deselectTownCenter();
+      selectBuilding(building);
+      soundManager.uiClick();
+      updateDeselectButtonVisibility();
+      return;
+    } else if (!isAllied) {
+      // Edifício inimigo: ataca se houver tropas
+      if (selected.length > 0) {
+        handleRightClick(clientX, clientY);
+        return;
+      }
+    }
+  }
+
+  // 6. Alvos Táticos sob o cursor (recursos naturais e inimigos)
+  const enemy = getEnemyUnderCursor(clientX, clientY);
+  const isEnemyTent = isEnemyTentUnderCursor(clientX, clientY);
+  const gold = getGoldMineUnderCursor(clientX, clientY);
+  const stone = getStoneMineUnderCursor(clientX, clientY);
+  const bush = getBerryBushUnderCursor(clientX, clientY);
+  const tree = getTreeUnderCursor(clientX, clientY);
+  const isResource = !!(gold || stone || bush || tree);
+  const isEnemyTarget = !!(enemy || isEnemyTent);
+
+  // Modo Comando / Ordem Direta: com unidades selecionadas, direciona ação ao alvo ou movimento no chão
+  if (mobileActionMode === 'DIRECT_ORDER' && selected.length > 0) {
+    handleRightClick(clientX, clientY);
+    return;
+  }
+
+  // Modo Seleção com unidades selecionadas:
+  // Se tocou intencionalmente em recurso ou inimigo, executa a ordem correspondente
+  if (selected.length > 0 && (isResource || isEnemyTarget)) {
+    handleRightClick(clientX, clientY);
+    return;
+  }
+
+  // 7. Toque no Vazio / Chão do Mapa:
+  // Se o ponto tocado não for recurso nem inimigo nem unidade nem edifício:
+  // Limpa a seleção de unidades e edifícios, liberando o estado para novas seleções sem travas
+  deselectAllUnits();
+  deselectBuilding();
+  deselectTownCenter();
+  updateDeselectButtonVisibility();
+}
+
+window.addEventListener('touchstart', (e: TouchEvent) => {
+  const target = e.target as HTMLElement;
+  if (target.closest('.ui-overlay, .match-config-modal, .pause-menu-modal, .game-over-modal, .mobile-tactical-controls, .popover-balloon')) {
+    return;
+  }
+  if (isGameOver || isMatchConfigModalOpen) return;
+
+  touchInertiaActive = false;
+  touchVelocityX = 0;
+  touchVelocityY = 0;
+
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    touchStartTime = performance.now();
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchLastX = t.clientX;
+    touchLastY = t.clientY;
+    touchMovedDistance = 0;
+    isTouchPanning = false;
+    isTouchLongPress = false;
+    isTouchBoxSelecting = false;
+    lastTouchMoveTime = touchStartTime;
+
+    const TOUCH_DRAG_THRESHOLD = 14;
+
+    if (touchLongPressTimer) clearTimeout(touchLongPressTimer);
+    touchLongPressTimer = setTimeout(() => {
+      if (touchMovedDistance < TOUCH_DRAG_THRESHOLD && !isPlacementMode) {
+        isTouchLongPress = true;
+        isTouchBoxSelecting = true;
+        if (navigator.vibrate) {
+          try { navigator.vibrate(35); } catch (_) {}
+        }
+        selectionBoxEl.style.left = `${touchStartX}px`;
+        selectionBoxEl.style.top = `${touchStartY}px`;
+        selectionBoxEl.style.width = '0px';
+        selectionBoxEl.style.height = '0px';
+        selectionBoxEl.style.display = 'block';
+        spawnFloatingText(new THREE.Vector3(cameraTarget.x, 2.5, cameraTarget.z), '📦 Modo Seleção em Caixa', '#38bdf8');
+      }
+    }, 450);
+
+  } else if (e.touches.length === 2) {
+    if (touchLongPressTimer) {
+      clearTimeout(touchLongPressTimer);
+      touchLongPressTimer = null;
+    }
+    isTouchBoxSelecting = false;
+    selectionBoxEl.style.display = 'none';
+    isPinchZooming = true;
+    lastPinchDist = getTouchesDistance(e.touches[0], e.touches[1]);
+    e.preventDefault();
+  }
+}, { passive: false });
+
+window.addEventListener('touchmove', (e: TouchEvent) => {
+  const target = e.target as HTMLElement;
+  if (target.closest('.ui-overlay, .match-config-modal, .pause-menu-modal, .mobile-tactical-controls')) {
+    return;
+  }
+  if (isGameOver || isMatchConfigModalOpen) return;
+
+  const TOUCH_DRAG_THRESHOLD = 14;
+
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const dx = t.clientX - touchLastX;
+    const dy = t.clientY - touchLastY;
+    const totalDist = Math.hypot(t.clientX - touchStartX, t.clientY - touchStartY);
+    touchMovedDistance = Math.max(touchMovedDistance, totalDist);
+
+    if (totalDist >= TOUCH_DRAG_THRESHOLD && !isTouchLongPress && touchLongPressTimer) {
+      clearTimeout(touchLongPressTimer);
+      touchLongPressTimer = null;
+    }
+
+    if (isTouchBoxSelecting) {
+      e.preventDefault();
+      const minX = Math.min(touchStartX, t.clientX);
+      const minY = Math.min(touchStartY, t.clientY);
+      const w = Math.abs(t.clientX - touchStartX);
+      const h = Math.abs(t.clientY - touchStartY);
+      selectionBoxEl.style.left = `${minX}px`;
+      selectionBoxEl.style.top = `${minY}px`;
+      selectionBoxEl.style.width = `${w}px`;
+      selectionBoxEl.style.height = `${h}px`;
+      selectionBoxEl.style.display = 'block';
+      return;
+    }
+
+    if (!isTouchBoxSelecting) {
+      // Só ativa arrasto e pan da câmera se o movimento exceder a tolerância de toque (deadzone de 14px)
+      if (totalDist >= TOUCH_DRAG_THRESHOLD) {
+        e.preventDefault();
+        isTouchPanning = true;
+        const worldUnitsPerPixel = frustumSize / window.innerHeight;
+        targetDesired.addScaledVector(RIGHT_GROUND, -dx * worldUnitsPerPixel);
+        targetDesired.addScaledVector(UP_GROUND, dy * worldUnitsPerPixel * 1.225);
+        clampCameraTarget(targetDesired);
+
+        const now = performance.now();
+        const dt = Math.max(1, now - lastTouchMoveTime);
+        touchVelocityX = (dx / dt) * 16.6;
+        touchVelocityY = (dy / dt) * 16.6;
+        lastTouchMoveTime = now;
+      }
+
+      touchLastX = t.clientX;
+      touchLastY = t.clientY;
+    }
+
+  } else if (e.touches.length === 2 && isPinchZooming) {
+    e.preventDefault();
+    const currentDist = getTouchesDistance(e.touches[0], e.touches[1]);
+    if (currentDist > 10 && lastPinchDist > 10) {
+      const deltaDist = currentDist - lastPinchDist;
+      const zoomFactor = 1 - (deltaDist / 280);
+      targetFrustumSize = THREE.MathUtils.clamp(targetFrustumSize * zoomFactor, MIN_FRUSTUM, MAX_FRUSTUM);
+      lastPinchDist = currentDist;
+    }
+  }
+}, { passive: false });
+
+window.addEventListener('touchend', (e: TouchEvent) => {
+  if (touchLongPressTimer) {
+    clearTimeout(touchLongPressTimer);
+    touchLongPressTimer = null;
+  }
+
+  if (isPinchZooming && e.touches.length < 2) {
+    isPinchZooming = false;
+    return;
+  }
+
+  if (isTouchBoxSelecting) {
+    isTouchBoxSelecting = false;
+    selectionBoxEl.style.display = 'none';
+
+    const minX = Math.min(touchStartX, touchLastX);
+    const maxX = Math.max(touchStartX, touchLastX);
+    const minY = Math.min(touchStartY, touchLastY);
+    const maxY = Math.max(touchStartY, touchLastY);
+
+    if (Math.abs(maxX - minX) > 10 || Math.abs(maxY - minY) > 10) {
+      deselectAllUnits();
+      deselectBuilding();
+      deselectTownCenter();
+
+      let selectedCount = 0;
+      for (const unit of unitsList) {
+        if (unit.faction === 'PLAYER' && !unit.isDying && !unit.isGarrisoned) {
+          const proj = unit.group.position.clone().project(camera);
+          const sx = ((proj.x + 1) / 2) * window.innerWidth;
+          const sy = ((-proj.y + 1) / 2) * window.innerHeight;
+          if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+            deselectTownCenter();
+            selectUnit(unit);
+            selectedCount++;
+          }
+        }
+      }
+      if (selectedCount > 0) {
+        soundManager.uiClick();
+        if (navigator.vibrate) try { navigator.vibrate(20); } catch (_) {}
+      }
+    }
+    return;
+  }
+
+  const duration = performance.now() - touchStartTime;
+  const dx = touchLastX - touchStartX;
+  const dy = touchLastY - touchStartY;
+  const distSq = dx * dx + dy * dy;
+  const TOUCH_DRAG_THRESHOLD = 14;
+
+  // Se moveu menos que TOUCH_DRAG_THRESHOLD (14px) e demorou menos de 350ms, É UM TOQUE INTENCIONAL (TAP/CLIQUE)
+  const isTap = touchMovedDistance < TOUCH_DRAG_THRESHOLD && distSq < (TOUCH_DRAG_THRESHOLD * TOUCH_DRAG_THRESHOLD) && duration < 350;
+
+  if (isTap) {
+    isTouchPanning = false;
+    touchInertiaActive = false;
+    touchVelocityX = 0;
+    touchVelocityY = 0;
+    lastTouchTapTime = performance.now();
+    handleQuickTap(touchStartX, touchStartY);
+    return;
+  }
+
+  if (isTouchPanning && touchMovedDistance >= TOUCH_DRAG_THRESHOLD) {
+    isTouchPanning = false;
+    if (Math.hypot(touchVelocityX, touchVelocityY) > 0.5) {
+      touchInertiaActive = true;
+    }
+    return;
+  }
+});
+
+window.addEventListener('touchcancel', () => {
+  if (touchLongPressTimer) {
+    clearTimeout(touchLongPressTimer);
+    touchLongPressTimer = null;
+  }
+  isTouchPanning = false;
+  isTouchBoxSelecting = false;
+  isPinchZooming = false;
+  selectionBoxEl.style.display = 'none';
 });
 
 window.addEventListener('mouseleave', () => {
@@ -16216,8 +17140,13 @@ export function destroyBuilding(building: ConstructionBuilding) {
   // Libera as células do grid
   for (let dx = 0; dx < building.size; dx++) {
     for (let dz = 0; dz < building.size; dz++) {
-      setCellWalkable(building.gridX + dx, building.gridZ + dz, true);
-      buildingsGridMap.delete(cellKey(building.gridX + dx, building.gridZ + dz));
+      const gx = building.gridX + dx;
+      const gz = building.gridZ + dz;
+      setCellWalkable(gx, gz, true);
+      if (building.type === 'WALL' || building.type === 'GATE') {
+        setWallCellOccupancy(gx, gz, false);
+      }
+      buildingsGridMap.delete(cellKey(gx, gz));
     }
   }
 
@@ -16364,7 +17293,8 @@ export function updateEnemyAI(now: number, delta: number = 0.016) {
 
   // Processa Treinamento de Aldeões no Town Center Inimigo
   if (enemyTcIsTraining) {
-    enemyTcTrainTimer += delta;
+    const trainRate = currentAIDifficulty === 'EASY' ? 0.6 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0);
+    enemyTcTrainTimer += delta * trainRate;
     if (enemyTcTrainTimer >= VILLAGER_TRAIN_TIME) {
       enemyTcIsTraining = false;
       enemyTcTrainTimer = 0;
@@ -16405,11 +17335,23 @@ export function updateEnemyAI(now: number, delta: number = 0.016) {
   if (lastInvasionWaveTime === 0) {
     lastInvasionWaveTime = gameStats.startTime;
   }
-  const waveIntervalMs = Math.max(1.0, currentMatchConfig.invasionIntervalMinutes || 3.0) * 60 * 1000;
+  // Calibração de Dificuldade da IA:
+  // - EASY: Primeiro ataque demora bastante (6 a 7 min) e intervalo entre ondas subsequentes é de 3.5 a 4.5 minutos.
+  // - MEDIUM: Primeiro ataque (~4min), intervalo padrão (~3min).
+  // - HARD: Primeiro ataque precoce (~2.5min - 3min), ataques mais frequentes (-25% de intervalo).
+  let baseIntervalMin = currentMatchConfig.invasionIntervalMinutes || 3.0;
+  if (!hasInvasionTriggered) {
+    baseIntervalMin = currentAIDifficulty === 'EASY' ? 6.5 : (currentAIDifficulty === 'HARD' ? 2.75 : 4.0);
+  } else {
+    if (currentAIDifficulty === 'EASY') baseIntervalMin = Math.max(3.5, baseIntervalMin * 1.5);
+    else if (currentAIDifficulty === 'HARD') baseIntervalMin *= 0.75;
+  }
+  const waveIntervalMs = Math.max(1.0, baseIntervalMin) * 60 * 1000;
   const timeSinceLastWave = now - lastInvasionWaveTime;
 
-  // Dispara a cada X minutos OU após 3 espadachins treinados pelo jogador na primeira onda
-  if (timeSinceLastWave >= waveIntervalMs || (!hasInvasionTriggered && playerSwordsmenTrainedCount >= 3)) {
+  // Dispara a cada X minutos OU após espadachins treinados pelo jogador na primeira onda
+  const minSwordsmenTrigger = currentAIDifficulty === 'EASY' ? 8 : (currentAIDifficulty === 'HARD' ? 2 : 3);
+  if (timeSinceLastWave >= waveIntervalMs || (!hasInvasionTriggered && playerSwordsmenTrainedCount >= minSwordsmenTrigger)) {
     triggerInvasionWave(now);
   }
 }
@@ -16690,8 +17632,21 @@ function updateEnemyInvaders(
 
   for (const invader of invaders) {
     if (invader.state === 'IDLE') {
-      if (!townCenterState.isDestroyed) {
-        commandAttackTownCenter(invader);
+      // Verifica se há defensores aliados ao alcance de visão/guarda
+      const nearbyDefender = playerUnits.find((p) => {
+        const d = Math.hypot(p.group.position.x - invader.group.position.x, p.group.position.z - invader.group.position.z);
+        return d <= 5.5;
+      });
+      if (nearbyDefender) {
+        commandAttack(invader, nearbyDefender);
+      } else if (!townCenterState.isDestroyed) {
+        // Tenta marchar rumo ao TC; se o caminho estiver bloqueado por muralhas, o comando colocará a unidade em guarda no limite acessível
+        const tcPos = TC_WORLD_CENTER;
+        const myPos = invader.group.position;
+        const distToTc = Math.hypot(myPos.x - tcPos.x, myPos.z - tcPos.z);
+        if (distToTc > 3.0) {
+          commandAttackTownCenter(invader);
+        }
       }
     } else if (invader.state === 'ATTACKING_STRUCTURE' && invader.targetStructure === 'TOWN_CENTER') {
       const nearbyDefender = playerUnits.find((p) => {
@@ -16728,6 +17683,15 @@ export function triggerInvasionWave(now: number = performance.now()): void {
   // Não "brota soldados do nada": só marcha se houver tropas de fato prontas na base
   if (readySoldiers.length === 0) {
     return;
+  }
+
+  // Calibração de Tropas por Onda:
+  // - EASY: Reduz o número de atacantes para 2 a 3 unidades no início, escalando suavemente com o tempo
+  if (currentAIDifficulty === 'EASY') {
+    const maxEasySoldiers = Math.min(2 + Math.floor(invasionWaveCount * 0.5), 4);
+    if (readySoldiers.length > maxEasySoldiers) {
+      readySoldiers = readySoldiers.slice(0, maxEasySoldiers);
+    }
   }
 
   hasInvasionTriggered = true;
@@ -17027,15 +17991,87 @@ export function restartGame(newMapSize: number = pendingMapSize, newSeed?: numbe
   updateTelemetryUnitsCount();
   updateTelemetrySelectionCount();
   updateObjectiveHUD();
+  resetPeacefulQuests();
   syncMapSizeUI();
 
   console.log(`[RTS] Partida reiniciada com sucesso! Mapa ${mapSize}x${mapSize} • Seed: #${currentMapSeed} • Modo Pacífico: ${currentMatchConfig.peacefulMode} • Mapa Todo Visível: ${currentMatchConfig.revealWholeMap} • ${treesMap.size} árvores.`);
 }
 
-const btnRestartGame = document.getElementById('btn-restart-game');
-btnRestartGame?.addEventListener('click', (e) => {
+const btnGameOverRestart = document.getElementById('btn-gameover-restart') || document.getElementById('btn-restart-game');
+btnGameOverRestart?.addEventListener('click', (e) => {
   e.stopPropagation();
+  const gameOverModal = document.getElementById('game-over-modal');
+  if (gameOverModal) {
+    gameOverModal.style.display = 'none';
+    gameOverModal.classList.add('hidden');
+  }
   restartGame();
+});
+
+document.getElementById('btn-game-over-menu')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const modal = document.getElementById('game-over-modal');
+  if (modal) modal.style.display = 'none';
+  returnToMainMenu();
+});
+
+// Modal de confirmação segura para reiniciar a partida
+const btnSettingsRestart = document.getElementById('btn-settings-restart-match');
+const btnPauseRestart = document.getElementById('btn-pause-restart');
+const confirmRestartDialog = document.getElementById('confirm-restart-dialog');
+const btnConfirmRestartYes = document.getElementById('btn-confirm-restart-yes');
+const btnConfirmRestartNo = document.getElementById('btn-confirm-restart-no');
+
+const openConfirmRestartDialog = (e?: Event) => {
+  e?.stopPropagation();
+  confirmRestartDialog?.classList.remove('hidden');
+};
+
+const closeConfirmRestartDialog = (e?: Event) => {
+  e?.stopPropagation();
+  confirmRestartDialog?.classList.add('hidden');
+};
+
+btnSettingsRestart?.addEventListener('click', openConfirmRestartDialog);
+btnPauseRestart?.addEventListener('click', openConfirmRestartDialog);
+btnConfirmRestartNo?.addEventListener('click', closeConfirmRestartDialog);
+
+btnConfirmRestartYes?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeConfirmRestartDialog();
+
+  // Fecha modais abertos
+  const matchConfig = document.getElementById('match-config-modal');
+  if (matchConfig) {
+    matchConfig.style.display = 'none';
+    matchConfig.classList.add('hidden');
+  }
+  const settingsModal = document.getElementById('settings-modal');
+  if (settingsModal) {
+    settingsModal.style.display = 'none';
+    settingsModal.classList.add('hidden');
+  }
+  const pauseModal = document.getElementById('pause-menu-modal');
+  if (pauseModal) {
+    pauseModal.style.display = 'none';
+    pauseModal.classList.add('hidden');
+  }
+  isMatchConfigModalOpen = false;
+  isGamePaused = false;
+
+  restartGame();
+});
+
+// Botões adicionais do rodapé de configurações (Retomar e Menu Principal)
+document.getElementById('btn-settings-close')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeMatchConfigModal();
+});
+
+document.getElementById('btn-settings-main-menu')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeMatchConfigModal();
+  returnToMainMenu();
 });
 
 const btnRandomSeed = document.getElementById('btn-random-seed');
@@ -17143,6 +18179,217 @@ const badgeCollegeTime = document.getElementById('val-college-time');
 const inputInvasionInterval = document.getElementById('cfg-invasion-interval') as HTMLInputElement | null;
 const badgeInvasionInterval = document.getElementById('val-invasion-interval');
 
+// =====================================================================
+// SISTEMA DE MISSÕES EM CAPÍTULOS (MODO CONSTRUTOR PACÍFICO)
+// =====================================================================
+export interface QuestObjective {
+  id: string;
+  description: string;
+  targetCount: number;
+  currentCount: number;
+  isCompleted: boolean;
+  // 'BUILDING_COUNT' | 'UNIT_COUNT' | 'EDUCATION_COUNT' | 'SPECIALIZATION_COUNT' | 'RESOURCE_ACCUMULATED'
+  checkType: string;
+  targetType?: string;
+}
+
+export interface ColonyChapter {
+  chapterIndex: number;
+  title: string;
+  subtitle: string;
+  objectives: QuestObjective[];
+  reward: { wood?: number; food?: number; gold?: number; stone?: number; text: string };
+}
+
+function createPeacefulChapters(): ColonyChapter[] {
+  const o = (id: string, description: string, checkType: string, targetType: string, targetCount: number): QuestObjective =>
+    ({ id, description, checkType, targetType, targetCount, currentCount: 0, isCompleted: false });
+  return [
+    {
+      chapterIndex: 0, title: 'O Assentamento Rural',
+      subtitle: 'Construa a infraestrutura básica para abrigar seus aldeões.',
+      objectives: [
+        o('c1_houses', 'Construir 3 Casas', 'BUILDING_COUNT', 'HOUSE', 3),
+        o('c1_lumber', 'Construir 1 Madeireira', 'BUILDING_COUNT', 'LUMBER_CAMP', 1),
+        o('c1_mine', 'Construir 1 Mina', 'BUILDING_COUNT', 'MINING_CAMP', 1)
+      ],
+      reward: { wood: 100, gold: 50, text: '+100 Madeira, +50 Ouro' }
+    },
+    {
+      chapterIndex: 1, title: 'Sustento & Expansão Agrícola',
+      subtitle: 'Garanta alimento e educação para sua população crescente.',
+      objectives: [
+        o('c2_mill', 'Construir 1 Moinho', 'BUILDING_COUNT', 'MILL', 1),
+        o('c2_school', 'Construir a Escola', 'BUILDING_COUNT', 'SCHOOL', 1),
+        o('c2_villagers', 'Atingir 10 Aldeões', 'UNIT_COUNT', 'VILLAGER', 10)
+      ],
+      reward: { food: 150, wood: 80, text: '+150 Alimento, +80 Madeira' }
+    },
+    {
+      chapterIndex: 2, title: 'Educação e Ciência Imperial',
+      subtitle: 'Forme cidadãos instruídos e especialistas de elite.',
+      objectives: [
+        o('c3_edu', 'Formar 2 Aldeões com Ensino Básico', 'EDUCATION_COUNT', 'VILLAGER', 2),
+        o('c3_college', 'Construir a Faculdade', 'BUILDING_COUNT', 'COLLEGE', 1),
+        o('c3_agro', 'Formar 1 Agrônomo', 'SPECIALIZATION_COUNT', 'AGRONOMIST', 1),
+        o('c3_farm', 'Construir 1 Fazenda', 'BUILDING_COUNT', 'FARM', 1)
+      ],
+      reward: { gold: 120, stone: 100, text: '+120 Ouro, +100 Pedra' }
+    },
+    {
+      chapterIndex: 3, title: 'Soberania e Urbanismo Monumental',
+      subtitle: 'Erga defesas imponentes e encha o tesouro da colônia.',
+      objectives: [
+        o('c4_arch', 'Formar 1 Arquiteto', 'SPECIALIZATION_COUNT', 'ARCHITECT', 1),
+        o('c4_walls', 'Erguer 10 Muralhas de Pedra', 'BUILDING_COUNT', 'WALL', 10),
+        o('c4_tower', 'Construir 1 Torre de Vigia', 'BUILDING_COUNT', 'TOWER', 1),
+        o('c4_gold', 'Acumular 400 de Ouro', 'RESOURCE_ACCUMULATED', 'GOLD', 400)
+      ],
+      reward: { text: '🏆 Vitória Econômica!' }
+    }
+  ];
+}
+
+let peacefulChapters: ColonyChapter[] = createPeacefulChapters();
+let currentChapterIndex = 0;
+let lastQuestCheckTime = 0;
+const ROMAN_NUMERALS = ['I', 'II', 'III', 'IV', 'V'];
+
+function playQuestTone(notes: number[], step: number, dur: number, vol: number): void {
+  const ctx = soundManager.ensureAudioContext();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+  notes.forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const st = t0 + i * step;
+    gain.gain.setValueAtTime(0.0001, st);
+    gain.gain.exponentialRampToValueAtTime(vol, st + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(st);
+    osc.stop(st + dur + 0.05);
+  });
+}
+const playQuestItemComplete = () => playQuestTone([659.25, 987.77], 0.09, 0.35, 0.12);
+const playQuestChapterFanfare = () => playQuestTone([523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5], 0.13, 0.6, 0.14);
+
+function questFloat(text: string, color: string): void {
+  spawnFloatingText(new THREE.Vector3(TC_WORLD_CENTER.x, 3.2, TC_WORLD_CENTER.z), text, color);
+}
+
+function renderQuestTrackerUI(): void {
+  const tracker = document.getElementById('peaceful-quest-tracker');
+  if (!tracker) return;
+  const chapter = peacefulChapters[currentChapterIndex];
+  if (!currentMatchConfig.peacefulMode || !chapter || currentGameState === 'MENU') {
+    tracker.classList.add('hidden');
+    return;
+  }
+  tracker.classList.remove('hidden');
+  const badge = document.getElementById('quest-chapter-badge');
+  const title = document.getElementById('quest-chapter-title');
+  const desc = document.getElementById('quest-chapter-desc');
+  const reward = document.getElementById('quest-reward-text');
+  const list = document.getElementById('quest-objectives-list');
+  if (badge) badge.textContent = `Capítulo ${ROMAN_NUMERALS[chapter.chapterIndex]}`;
+  if (title) title.textContent = chapter.title;
+  if (desc) desc.textContent = chapter.subtitle;
+  if (reward) reward.textContent = chapter.reward.text;
+  if (list) {
+    const html = chapter.objectives.map(obj => `
+      <li class="quest-item${obj.isCompleted ? ' completed' : ''}" data-quest-id="${obj.id}">
+        <span class="quest-item-desc"><span class="quest-check-icon">${obj.isCompleted ? '✔' : '◻'}</span> ${obj.description}</span>
+        <span class="quest-item-count">${obj.checkType === 'RESOURCE_ACCUMULATED' ? `${obj.currentCount}/${obj.targetCount}` : `${obj.currentCount}/${obj.targetCount}`}</span>
+      </li>`).join('');
+    if (list.innerHTML !== html) list.innerHTML = html;
+  }
+}
+
+function completeChapter(chapter: ColonyChapter): void {
+  playQuestChapterFanfare();
+  const r = chapter.reward;
+  if (r.wood) resources.wood += r.wood;
+  if (r.food) resources.food += r.food;
+  if (r.gold) resources.gold += r.gold;
+  if (r.stone) resources.stone += r.stone;
+  if (r.wood || r.food || r.gold || r.stone) questFloat(`🎁 ${r.text}`, '#4ade80');
+
+  if (chapter.chapterIndex >= peacefulChapters.length - 1) {
+    triggerGameOver('VICTORY', 'Sua colônia se tornou a mais próspera e admirada de todo o reino!');
+    const titleEl = document.getElementById('game-over-title');
+    if (titleEl) titleEl.textContent = '🏆 MESTRE CONSTRUTOR DA COLÔNIA!';
+    return;
+  }
+  const tracker = document.getElementById('peaceful-quest-tracker');
+  tracker?.classList.add('quest-chapter-transition');
+  currentChapterIndex++;
+  setTimeout(() => {
+    renderQuestTrackerUI();
+    tracker?.classList.remove('quest-chapter-transition');
+  }, 450);
+}
+
+export function updatePeacefulQuests(): void {
+  if (!currentMatchConfig.peacefulMode || isGameOver) { renderQuestTrackerUI(); return; }
+  const chapter = peacefulChapters[currentChapterIndex];
+  if (!chapter) return;
+  let allCompleted = true;
+  const myUnits = unitsList.filter(u => u.faction === 'PLAYER' && !u.isDying && u.hp > 0);
+
+  chapter.objectives.forEach(obj => {
+    if (obj.isCompleted) return;
+    let count = 0;
+    switch (obj.checkType) {
+      case 'BUILDING_COUNT':
+        count = buildingsList.filter(b => b.type === obj.targetType && b.faction === 'PLAYER' && b.isCompleted && (b.hp === undefined || b.hp > 0)).length;
+        break;
+      case 'UNIT_COUNT':
+        count = myUnits.filter(u => u.unitType === obj.targetType).length;
+        break;
+      case 'EDUCATION_COUNT':
+        count = myUnits.filter(u => u.educationLevel >= 1).length;
+        break;
+      case 'SPECIALIZATION_COUNT':
+        count = myUnits.filter(u => u.eliteSpecialization === obj.targetType).length;
+        break;
+      case 'RESOURCE_ACCUMULATED':
+        if (obj.targetType === 'GOLD') count = Math.floor(resources.gold);
+        break;
+    }
+    obj.currentCount = Math.min(obj.targetCount, count);
+    if (obj.currentCount >= obj.targetCount) {
+      obj.isCompleted = true;
+      playQuestItemComplete();
+      questFloat('✨ Objetivo Concluído!', '#4ade80');
+    }
+    if (!obj.isCompleted) allCompleted = false;
+  });
+
+  renderQuestTrackerUI();
+  if (allCompleted) completeChapter(chapter);
+}
+
+export function resetPeacefulQuests(data?: { currentChapterIndex: number; completedObjectiveIds: string[] }): void {
+  peacefulChapters = createPeacefulChapters();
+  currentChapterIndex = Math.max(0, Math.min(data?.currentChapterIndex ?? 0, peacefulChapters.length - 1));
+  const done = new Set(data?.completedObjectiveIds ?? []);
+  peacefulChapters.forEach((ch, i) => ch.objectives.forEach(obj => {
+    if (i < currentChapterIndex || done.has(obj.id)) { obj.isCompleted = true; obj.currentCount = obj.targetCount; }
+  }));
+  renderQuestTrackerUI();
+}
+
+document.getElementById('btn-toggle-quest-body')?.addEventListener('click', () => {
+  const tracker = document.getElementById('peaceful-quest-tracker');
+  if (!tracker) return;
+  const collapsed = tracker.classList.toggle('collapsed');
+  const arrow = document.getElementById('quest-toggle-arrow');
+  if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
+});
+
 export function updateObjectiveHUD(): void {
   const objEl = document.getElementById('telemetry-objective');
   if (objEl) {
@@ -17237,19 +18484,95 @@ export function syncMatchConfigInputs(cfg: MatchConfig = currentMatchConfig): vo
   if (popoverChkPeaceful) popoverChkPeaceful.checked = cfg.peacefulMode;
 }
 
-export function openMatchConfigModal(): void {
+export function updateSettingsModalInteractability(isPlaying: boolean): void {
+  const modal = document.getElementById('match-config-modal');
+  if (!modal) return;
+
+  // Seleciona todos os inputs, selects e botões de configuração que NÃO pertençam ao áudio ou ao rodapé de ações
+  const structuralInputs = modal.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>(
+    'input:not(#settings-volume-slider):not([id*="sound"]):not([id*="audio"]), ' +
+    'select:not([id*="sound"]):not([id*="audio"]), ' +
+    '#tab-structures input, #tab-economy input, #tab-army input, #tab-world input, ' +
+    '.btn-map-size-option, .config-switch input, ' +
+    '#btn-reset-match-config'
+  );
+
+  structuralInputs.forEach((elem) => {
+    elem.disabled = isPlaying;
+    if (isPlaying) {
+      elem.classList.add('input-locked-in-game');
+    } else {
+      elem.classList.remove('input-locked-in-game');
+    }
+  });
+
+  // Abas estruturais (Estruturas, Economia, Exército, Terreno)
+  const structuralTabs = modal.querySelectorAll<HTMLButtonElement>(
+    '.config-tab-btn[data-tab="tab-structures"], ' +
+    '.config-tab-btn[data-tab="tab-economy"], ' +
+    '.config-tab-btn[data-tab="tab-army"], ' +
+    '.config-tab-btn[data-tab="tab-world"]'
+  );
+  structuralTabs.forEach((tab) => {
+    if (isPlaying) {
+      tab.classList.add('input-locked-in-game');
+    } else {
+      tab.classList.remove('input-locked-in-game');
+    }
+  });
+
+  // Alerta visual avisando que a partida está em andamento
+  let inGameLockNotice = document.getElementById('settings-in-game-lock-notice');
+  if (isPlaying) {
+    if (!inGameLockNotice) {
+      inGameLockNotice = document.createElement('div');
+      inGameLockNotice.id = 'settings-in-game-lock-notice';
+      inGameLockNotice.className = 'settings-lock-banner';
+      inGameLockNotice.innerHTML = '🔒 <em>Configurações do mapa e regras estão travadas durante a partida. Apenas o áudio pode ser ajustado.</em>';
+      const card = document.getElementById('match-config-card') || modal;
+      const tabsNav = card.querySelector('.config-tabs-nav');
+      if (tabsNav) {
+        card.insertBefore(inGameLockNotice, tabsNav);
+      } else {
+        card.prepend(inGameLockNotice);
+      }
+    }
+    inGameLockNotice.style.display = 'block';
+
+    // Garante que a aba de Áudio esteja ativa por padrão durante o jogo
+    const audioTabBtn = modal.querySelector<HTMLButtonElement>('.config-tab-btn[data-tab="tab-audio"]');
+    const audioTabPane = document.getElementById('tab-audio');
+    if (audioTabBtn && audioTabPane) {
+      modal.querySelectorAll('.config-tab-btn').forEach((b) => b.classList.remove('active'));
+      modal.querySelectorAll('.config-tab-pane').forEach((p) => p.classList.remove('active'));
+      audioTabBtn.classList.add('active');
+      audioTabPane.classList.add('active');
+    }
+  } else if (inGameLockNotice) {
+    inGameLockNotice.style.display = 'none';
+  }
+}
+
+export function openMatchConfigModal(isPlayingOverride?: boolean): void {
   isMatchConfigModalOpen = true;
   if (matchConfigModalEl) matchConfigModalEl.style.display = 'flex';
 
-  if (hasMatchEverStarted) {
+  const isPlaying = isPlayingOverride !== undefined ? isPlayingOverride : (hasMatchEverStarted && currentGameState === 'IN_GAME');
+  updateSettingsModalInteractability(isPlaying);
+
+  const settingsModalActions = document.getElementById('settings-modal-actions');
+  if (isPlaying) {
     if (btnCloseMatchConfig) btnCloseMatchConfig.style.display = 'inline-flex';
     if (btnStartMatchLabel) btnStartMatchLabel.textContent = 'Salvar & Retomar';
+    if (settingsModalActions) settingsModalActions.style.display = 'flex';
   } else {
     if (btnCloseMatchConfig) btnCloseMatchConfig.style.display = 'none';
     if (btnStartMatchLabel) btnStartMatchLabel.textContent = 'Iniciar Partida';
+    if (settingsModalActions) settingsModalActions.style.display = 'none';
   }
 
   syncMatchConfigInputs(currentMatchConfig);
+  updateAudioSettingsUI();
   closeEnginePopover();
 }
 
@@ -18268,6 +19591,22 @@ if (minimapCanvas) {
   minimapCanvas.addEventListener('pointerup', stopMinimapInteraction);
   minimapCanvas.addEventListener('pointercancel', stopMinimapInteraction);
   minimapCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  minimapCanvas.addEventListener('touchstart', (e: TouchEvent) => {
+    if (e.touches.length === 1) {
+      navigateFromMinimap(e.touches[0] as any);
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  minimapCanvas.addEventListener('touchmove', (e: TouchEvent) => {
+    if (e.touches.length === 1) {
+      navigateFromMinimap(e.touches[0] as any);
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, { passive: false });
 }
 
 // Expor helpers de depuração no window
@@ -18641,6 +19980,11 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.1);
   const now = performance.now();
 
+  if (currentMatchConfig.peacefulMode && !isGamePaused && now - lastQuestCheckTime > 400) {
+    lastQuestCheckTime = now;
+    updatePeacefulQuests();
+  }
+
   if (!isGamePaused) {
     if (cameraShakeRemaining > 0) {
       cameraShakeRemaining = Math.max(0, cameraShakeRemaining - delta);
@@ -18681,6 +20025,21 @@ function animate() {
 
     if (edgeX !== 0) targetDesired.addScaledVector(RIGHT_GROUND, edgeX * edgePanSpeed);
     if (edgeY !== 0) targetDesired.addScaledVector(UP_GROUND, edgeY * edgePanSpeed);
+  }
+
+  // Amortecimento sutil de inércia para navegação panorâmica touch fluida
+  if (touchInertiaActive) {
+    const worldUnitsPerPixel = frustumSize / window.innerHeight;
+    targetDesired.addScaledVector(RIGHT_GROUND, -touchVelocityX * worldUnitsPerPixel);
+    targetDesired.addScaledVector(UP_GROUND, touchVelocityY * worldUnitsPerPixel * 1.225);
+    clampCameraTarget(targetDesired);
+    touchVelocityX *= 0.91;
+    touchVelocityY *= 0.91;
+    if (Math.hypot(touchVelocityX, touchVelocityY) < 0.1) {
+      touchInertiaActive = false;
+      touchVelocityX = 0;
+      touchVelocityY = 0;
+    }
   }
 
   clampCameraTarget(targetDesired);
@@ -18732,7 +20091,8 @@ function animate() {
 
       if (b.type === 'BARRACKS') {
         if (b.isCompleted && b.trainingQueue.length > 0) {
-          b.trainingTimer += delta;
+          const trainRate = b.faction === 'ENEMY' ? (currentAIDifficulty === 'EASY' ? 0.6 : (currentAIDifficulty === 'HARD' ? 1.2 : 1.0)) : 1.0;
+          b.trainingTimer += delta * trainRate;
 
           // Barra 3D sobre o Quartel
           if (b.trainingProgressGroup && b.trainingProgressBarMesh) {
@@ -18759,7 +20119,8 @@ function animate() {
             if (soldierFaction === 'PLAYER') {
               gameStats.unitsTrainedTotal++;
               playerSwordsmenTrainedCount++;
-              if (!hasInvasionTriggered && playerSwordsmenTrainedCount >= 3) {
+              const triggerThreshold = currentAIDifficulty === 'EASY' ? 8 : (currentAIDifficulty === 'HARD' ? 2 : 3);
+              if (!hasInvasionTriggered && playerSwordsmenTrainedCount >= triggerThreshold) {
                 triggerInvasion();
               }
               spawnFloatingText(new THREE.Vector3(freeCell.x + 0.5, 1.6, freeCell.y + 0.5), '+1 Espadachim ⚔️', '#60a5fa');
@@ -18935,6 +20296,7 @@ function animate() {
     // 3. Máquina de estados dos aldeões e combatentes
     for (const unit of unitsList) {
       updateUnitState(unit, delta, now);
+      resolveWallCollision(unit);
       if (unit.carryMesh.visible) {
         unit.carryMesh.position.y = 0.95 + Math.abs(Math.sin(now * 0.012)) * 0.04;
       }
@@ -19278,20 +20640,7 @@ function animate() {
     }
   }
 
-  // Telemetria (otimizado: só manipula DOM se o painel estiver expandido)
-  if (!isTelemetryPanelCollapsed()) {
-    let woodcutters = 0;
-    for (const unit of unitsList) {
-      if (unit.state === 'MOVING_TO_RESOURCE' || unit.state === 'GATHERING' ||
-          unit.state === 'RETURNING_TO_BASE' || unit.state === 'DEPOSITING') {
-        woodcutters++;
-      }
-    }
-    if (telemetryCamPosEl) telemetryCamPosEl.textContent = `${cameraTarget.x.toFixed(1)}, ${cameraTarget.z.toFixed(1)}`;
-    if (telemetryFrustumEl) telemetryFrustumEl.textContent = frustumSize.toFixed(1);
-    if (telemetryWoodcuttersEl) telemetryWoodcuttersEl.textContent = `${woodcutters}`;
-    if (telemetryTreesEl) telemetryTreesEl.textContent = `${treesMap.size}`;
-  }
+  // Telemetria RTS desativada para economizar CPU e despoluir o HUD
 
   // 7. Névoa de Guerra (FoW), Visibilidade de Entidades & Minimapa
   updateBuildingOcclusionTransparency(delta);
@@ -19395,12 +20744,20 @@ export function setupInitialMatch(seed: number = currentMapSeed): void {
 }
 
 // --- 18. INTEGRAÇÃO ELECTRON DESKTOP & AUTO-UPDATE VIA GITHUB ---
+interface UpdateProgressPayload {
+  percent?: number;
+  transferred?: string | number;
+  total?: string | number;
+  speed?: string | number;
+  bytesPerSecond?: number;
+}
+
 interface ElectronUpdaterAPI {
   getAppVersion: () => Promise<string>;
-  startDownload: () => Promise<void>;
+  startDownload: () => Promise<{ success: boolean; error?: string } | void>;
   quitAndInstall: () => Promise<void>;
   onUpdateAvailable: (callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void) => () => void;
-  onUpdateProgress: (callback: (progressObj: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void;
+  onUpdateProgress: (callback: (data: UpdateProgressPayload | number) => void) => () => void;
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void;
   onUpdateError: (callback: (errMsg: string) => void) => () => void;
 }
@@ -19440,6 +20797,11 @@ function setupElectronAutoUpdate(): void {
         appVersionBadgeEl.textContent = `v${ver}`;
         appVersionBadgeEl.title = `Domain of Tiles Desktop (v${ver})`;
       }
+      if (ver) {
+        document.querySelectorAll('.game-version-tag').forEach((el) => {
+          el.textContent = `Domain of Tiles • v${ver}`;
+        });
+      }
     }).catch(() => {});
 
     // 2. Quando houver nova versão disponível
@@ -19468,16 +20830,24 @@ function setupElectronAutoUpdate(): void {
     });
 
     // 3. Progresso do download
-    updater.onUpdateProgress((progressObj) => {
+    updater.onUpdateProgress((data) => {
       if (updateProgressBarEl) updateProgressBarEl.style.display = 'flex';
       if (btnUpdateDownload) btnUpdateDownload.style.display = 'none';
-      const pct = Math.round(progressObj.percent || 0);
-      const speedMb = progressObj.bytesPerSecond ? (progressObj.bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s' : '';
+      // Suporta objeto { percent, transferred, total, speed } ou número direto
+      const rawPct = typeof data === 'number' ? data : Number(data?.percent);
+      const pct = Math.min(100, Math.max(0, Number.isFinite(rawPct) ? Math.round(rawPct) : 0));
       if (updateProgressFillEl) {
-        updateProgressFillEl.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+        updateProgressFillEl.style.width = `${pct}%`;
+      }
+      if (updateProgressBarEl && 'value' in updateProgressBarEl) {
+        (updateProgressBarEl as HTMLProgressElement).value = pct;
       }
       if (updateProgressTextEl) {
-        updateProgressTextEl.textContent = `${pct}% ${speedMb ? '• ' + speedMb : ''}`;
+        if (typeof data === 'object' && data && Number(data.total) > 0) {
+          updateProgressTextEl.textContent = `Baixando: ${pct}% (${data.transferred}MB / ${data.total}MB - ${data.speed ?? 0} KB/s)`;
+        } else {
+          updateProgressTextEl.textContent = `Baixando: ${pct}%`;
+        }
       }
       if (updateBannerDescEl) {
         updateBannerDescEl.textContent = `Baixando atualização do repositório (${pct}%)...`;
@@ -19502,19 +20872,37 @@ function setupElectronAutoUpdate(): void {
     updater.onUpdateError((errMsg) => {
       console.warn('[AutoUpdate] Erro recebido:', errMsg);
       if (updateBannerDescEl && electronUpdateBannerEl && electronUpdateBannerEl.style.display !== 'none') {
-        updateBannerDescEl.textContent = `Erro ao verificar atualizações: ${errMsg}`;
+        updateBannerDescEl.textContent = `Erro no download: ${errMsg}`;
+        updateBannerDescEl.style.color = '#ef4444';
+      }
+      const statusEl = document.getElementById('update-status-message');
+      if (statusEl) {
+        statusEl.textContent = `Erro no download: ${errMsg}`;
+        statusEl.style.color = '#ef4444';
+      }
+      // Restaura o botão de baixar para permitir nova tentativa
+      if (updateProgressBarEl) updateProgressBarEl.style.display = 'none';
+      if (btnUpdateDownload) {
+        btnUpdateDownload.style.display = 'inline-flex';
+        btnUpdateDownload.removeAttribute('disabled');
+        btnUpdateDownload.innerHTML = '<span class="btn-icon">🔁</span> Tentar Novamente';
       }
     });
 
     // Ações dos botões
     btnUpdateDownload?.addEventListener('click', () => {
       soundManager.uiClick();
+      if (updateBannerDescEl) updateBannerDescEl.style.color = '';
       if (btnUpdateDownload) {
         btnUpdateDownload.setAttribute('disabled', 'true');
         btnUpdateDownload.textContent = 'Iniciando download...';
       }
       if (updateProgressBarEl) updateProgressBarEl.style.display = 'flex';
-      updater.startDownload().catch((err) => {
+      if (updateProgressFillEl) updateProgressFillEl.style.width = '0%';
+      if (updateProgressTextEl) updateProgressTextEl.textContent = 'Conectando ao GitHub Releases...';
+      updater.startDownload().then((res) => {
+        if (res && res.success === false) console.error('[AutoUpdate] Download falhou:', res.error);
+      }).catch((err) => {
         console.error('[AutoUpdate] Falha no download:', err);
         if (updateBannerDescEl) updateBannerDescEl.textContent = 'Erro ao iniciar o download.';
         if (btnUpdateDownload) btnUpdateDownload.removeAttribute('disabled');
@@ -19671,6 +21059,7 @@ export interface FullSaveState {
   buildings: BuildingSaveData[];
   resources: ResourceNodeSaveData[];
   townCenterRallyPoint?: { x: number; z: number; targetType: string; targetId?: number | string };
+  peacefulQuestsData?: { currentChapterIndex: number; completedObjectiveIds: string[] };
 }
 
 const QUICK_SAVE_KEY = 'rts_quicksave';
@@ -19929,6 +21318,10 @@ export function serializeGameState(saveName: string = 'Partida Salva'): FullSave
       z: townCenterState.rallyPoint.z,
       targetType: townCenterState.rallyPoint.targetType,
       targetId: townCenterState.rallyPoint.targetId
+    } : undefined,
+    peacefulQuestsData: currentMatchConfig.peacefulMode ? {
+      currentChapterIndex,
+      completedObjectiveIds: (peacefulChapters[currentChapterIndex]?.objectives ?? []).filter(o => o.isCompleted).map(o => o.id)
     } : undefined
   };
 }
@@ -20584,6 +21977,9 @@ export function deserializeAndLoadGame(save: FullSaveState): void {
   }
   updateRallyPointVisuals();
 
+  // 14. Restaura progresso das missões do modo pacífico
+  resetPeacefulQuests(save.peacefulQuestsData);
+
   closeSaveLoadModal();
   if (currentGameState === 'MENU') {
     currentGameState = 'IN_GAME';
@@ -20974,8 +22370,194 @@ export function returnToMainMenu(): void {
 export function setupMainMenuUI(): void {
   const btnNewGame = document.getElementById('btn-menu-new-game');
   const btnLoadGame = document.getElementById('btn-menu-load-game');
-  const btnSettings = document.getElementById('btn-menu-settings');
+  const btnAbout = document.getElementById('btn-menu-about');
   const btnQuit = document.getElementById('btn-menu-quit');
+
+  // Modais de Nova Partida e Sobre o Jogo
+  const modalNewGameSetup = document.getElementById('modal-new-game-setup');
+  const modalAboutGame = document.getElementById('modal-about-game');
+  const btnCloseSetupModal = document.getElementById('btn-close-setup-modal');
+  const btnSetupCancel = document.getElementById('btn-setup-cancel');
+  const btnSetupStartGame = document.getElementById('btn-setup-start-game');
+  const btnSetupOpenSettings = document.getElementById('btn-setup-open-settings');
+
+  const cardModeCombat = document.getElementById('card-mode-combat');
+  const cardModeBuilder = document.getElementById('card-mode-builder');
+  const combatSpecificOptions = document.getElementById('combat-specific-options');
+  const diffButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.btn-diff-option'));
+
+  const summaryMapSize = document.getElementById('summary-map-size');
+  const summaryFogState = document.getElementById('summary-fog-state');
+
+  const btnCloseAboutModal = document.getElementById('btn-close-about-modal');
+  const btnCloseAboutBtn = document.getElementById('btn-close-about-btn');
+
+  let selectedGameMode: 'COMBAT' | 'BUILDER' = 'COMBAT';
+  let selectedDiff: AIDifficulty = 'MEDIUM';
+
+  const updateSetupModalUI = () => {
+    cardModeCombat?.classList.toggle('active', selectedGameMode === 'COMBAT');
+    cardModeBuilder?.classList.toggle('active', selectedGameMode === 'BUILDER');
+
+    if (combatSpecificOptions) {
+      combatSpecificOptions.style.display = selectedGameMode === 'COMBAT' ? 'block' : 'none';
+    }
+
+    if (btnSetupStartGame) {
+      btnSetupStartGame.textContent = selectedGameMode === 'COMBAT' ? '▶ Iniciar Batalha' : '▶ Iniciar Construção';
+    }
+
+    for (const b of diffButtons) {
+      b.classList.toggle('active', b.dataset.diff === selectedDiff);
+    }
+
+    if (summaryMapSize) {
+      summaryMapSize.textContent = 'Grande (80×80)';
+    }
+    if (summaryFogState) {
+      summaryFogState.textContent = 'Ativa (Exploração clássica)';
+    }
+  };
+
+  const openNewGameSetupModal = () => {
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    selectedGameMode = 'COMBAT';
+    selectedDiff = 'MEDIUM';
+    updateSetupModalUI();
+    if (modalNewGameSetup) {
+      modalNewGameSetup.style.display = 'flex';
+      modalNewGameSetup.classList.remove('hidden');
+    }
+  };
+
+  const closeNewGameSetupModal = () => {
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    if (modalNewGameSetup) {
+      modalNewGameSetup.style.display = 'none';
+      modalNewGameSetup.classList.add('hidden');
+    }
+  };
+
+  const openAboutModal = () => {
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    if (modalAboutGame) {
+      modalAboutGame.style.display = 'flex';
+      modalAboutGame.classList.remove('hidden');
+    }
+  };
+
+  const closeAboutModal = () => {
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    if (modalAboutGame) {
+      modalAboutGame.style.display = 'none';
+      modalAboutGame.classList.add('hidden');
+    }
+  };
+
+  cardModeCombat?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    selectedGameMode = 'COMBAT';
+    updateSetupModalUI();
+  });
+
+  cardModeBuilder?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    selectedGameMode = 'BUILDER';
+    updateSetupModalUI();
+  });
+
+  for (const b of diffButtons) {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try {
+        soundManager.uiClick();
+      } catch (_) {}
+      const diff = b.dataset.diff as AIDifficulty;
+      if (diff) {
+        selectedDiff = diff;
+        updateSetupModalUI();
+      }
+    });
+  }
+
+  btnSetupOpenSettings?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      soundManager.uiClick();
+    } catch (_) {}
+    closeNewGameSetupModal();
+    openMatchConfigModal(false);
+  });
+
+  btnCloseSetupModal?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeNewGameSetupModal();
+  });
+
+  btnSetupCancel?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeNewGameSetupModal();
+  });
+
+  btnSetupStartGame?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeNewGameSetupModal();
+
+    // Aplica os Presets de Nova Partida
+    currentAIDifficulty = selectedDiff;
+    currentMatchConfig.aiDifficulty = selectedDiff;
+
+    if (selectedGameMode === 'COMBAT') {
+      currentMatchConfig.mapSize = 80;
+      currentMatchConfig.revealWholeMap = false;
+      currentMatchConfig.peacefulMode = false;
+      hasEnemyFaction = true;
+    } else {
+      currentMatchConfig.mapSize = 80;
+      currentMatchConfig.peacefulMode = true;
+      hasEnemyFaction = false;
+    }
+
+    // Se o mapa atual já for do mesmo tamanho e nunca tiver começado, reinicia ou inicia
+    if (!hasMatchEverStarted && mapSize === currentMatchConfig.mapSize) {
+      if (currentMatchConfig.peacefulMode) {
+        restartGame(80);
+      }
+      startNewGameFromMenu();
+    } else {
+      restartGame(currentMatchConfig.mapSize);
+      startNewGameFromMenu();
+    }
+  });
+
+  btnAbout?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAboutModal();
+  });
+
+  btnCloseAboutModal?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAboutModal();
+  });
+
+  btnCloseAboutBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAboutModal();
+  });
 
   // Efeito sonoro de hover nos botões de menu e pausa
   const menuButtons = document.querySelectorAll('.menu-btn, .btn-menu-action, .btn-pause-action');
@@ -20989,7 +22571,7 @@ export function setupMainMenuUI(): void {
 
   btnNewGame?.addEventListener('click', (e) => {
     e.stopPropagation();
-    startNewGameFromMenu();
+    openNewGameSetupModal();
   });
 
   btnLoadGame?.addEventListener('click', (e) => {
@@ -20998,14 +22580,6 @@ export function setupMainMenuUI(): void {
       soundManager.uiClick();
     } catch (_) {}
     openSaveLoadModal();
-  });
-
-  btnSettings?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    try {
-      soundManager.uiClick();
-    } catch (_) {}
-    openMatchConfigModal();
   });
 
   // Mostra botão de Sair do Jogo se estiver rodando no Electron Desktop
@@ -21081,3 +22655,27 @@ setupGameCamera(alliedBaseX, alliedBaseZ);
 setUIMenuMode(true);
 
 animate();
+
+// ========================================================
+// RELOCAÇÃO DO BOTÃO DE ATALHOS (MOBILE/TABLET → TOPO DIREITO)
+// O dock usa backdrop-filter, que prende filhos position:fixed;
+// por isso movemos o container para fora do dock em telas móveis.
+// ========================================================
+(() => {
+  const container = document.getElementById('controls-trigger-container');
+  const dock = document.getElementById('bottom-action-dock');
+  const hud = document.getElementById('in-game-hud');
+  if (!container || !dock || !hud) return;
+  const mq = window.matchMedia('(max-width: 900px), (max-height: 600px)');
+  const apply = () => {
+    if (mq.matches) {
+      if (container.parentElement !== hud) hud.appendChild(container);
+      container.classList.add('controls-mobile-topright');
+    } else {
+      if (container.parentElement !== dock) dock.appendChild(container);
+      container.classList.remove('controls-mobile-topright');
+    }
+  };
+  apply();
+  mq.addEventListener('change', apply);
+})();

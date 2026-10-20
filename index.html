@@ -38,12 +38,12 @@
 
           <button
             type="button"
-            id="btn-menu-settings"
+            id="btn-menu-about"
             class="menu-btn"
-            title="Ajustar som, atalhos e parâmetros da partida"
+            title="Informações sobre o jogo"
           >
-            <span class="btn-menu-icon">⚙️</span>
-            <span class="btn-menu-label">Configurações</span>
+            <span class="btn-menu-icon">ℹ️</span>
+            <span class="btn-menu-label">Sobre</span>
           </button>
 
           <button
@@ -70,12 +70,29 @@
 
         <!-- Versão e Créditos Discretos -->
         <div class="menu-footer">
-          <span class="menu-footer-credits">v1.0.0</span>
+          <span class="menu-footer-credits">v1.1.0</span>
         </div>
       </div>
 
       <!-- In-Game HUD Container (Oculto no Menu Principal) -->
       <div id="in-game-hud" class="in-game-hud hidden" style="display: none;">
+        <div id="peaceful-quest-tracker" class="quest-tracker-container hidden">
+          <div class="quest-tracker-header" id="btn-toggle-quest-body">
+            <div class="quest-header-left">
+              <span class="quest-icon">📜</span>
+              <span class="quest-chapter-badge" id="quest-chapter-badge">Capítulo I</span>
+            </div>
+            <span class="quest-toggle-arrow" id="quest-toggle-arrow">▾</span>
+          </div>
+          <div class="quest-tracker-body" id="quest-tracker-body">
+            <h4 class="quest-title" id="quest-chapter-title">O Assentamento Rural</h4>
+            <p class="quest-subtitle" id="quest-chapter-desc">Construa a infraestrutura básica para abrigar seus aldeões.</p>
+            <ul class="quest-objectives-list" id="quest-objectives-list"></ul>
+            <div class="quest-reward-preview">
+              🎁 <strong>Recompensa:</strong> <span id="quest-reward-text">+100 Madeira, +50 Ouro</span>
+            </div>
+          </div>
+        </div>
         <!-- RTS Drag-Box Green Selection Rect -->
         <div id="selection-box"></div>
 
@@ -90,40 +107,25 @@
         <div class="settings-triggers-row">
           <button
             type="button"
-            id="btn-toggle-engine-settings"
-            class="btn-floating-trigger"
-            title="Configurações do Motor e Tamanho do Mapa"
+            id="btn-open-settings"
+            class="btn-floating-trigger btn-settings-engine"
+            title="Configurações da Partida (Som, Terreno, Economia) [⚙️]"
             aria-expanded="false"
           >
-            <span class="trigger-icon">⚙️</span>
-            <span class="trigger-label">Configurações / Motor</span>
-            <span class="trigger-badge" id="trigger-map-size-badge">50×50</span>
-            <span class="trigger-chevron" id="engine-popover-chevron">▾</span>
+            <span class="trigger-icon icon">⚙️</span>
+            <span class="trigger-label btn-label">Configurações</span>
           </button>
 
           <button
             type="button"
             id="btn-toggle-save-load"
-            class="btn-floating-trigger"
+            class="btn-floating-trigger btn-save-load-trigger"
             title="Salvar e Carregar Partida (Save & Load) [F5 / F9]"
             aria-expanded="false"
           >
-            <span class="trigger-icon">💾</span>
-            <span class="trigger-label">Salvar / Carregar</span>
+            <span class="trigger-icon icon">💾</span>
+            <span class="trigger-label btn-label">Salvar / Carregar</span>
           </button>
-
-          <button
-            type="button"
-            id="btn-toggle-audio-mute"
-            class="btn-floating-trigger btn-mute-trigger"
-            title="Alternar Áudio Procedural (Som / Mudo)"
-            aria-label="Alternar Som"
-          >
-            <span id="audio-mute-icon" class="trigger-icon">🔊</span>
-            <span id="audio-mute-label" class="trigger-label">Som</span>
-          </button>
-
-          <div id="app-version-badge" class="app-version-badge" title="Domain of Tiles - Versão do Jogo">v1.0.0</div>
         </div>
 
         <!-- Balão Suspenso (Popover) do Motor & Mapa -->
@@ -194,7 +196,7 @@
                 <span class="opt-dim">100×100</span>
               </button>
             </div>
-            <!-- Atalhos Rápidos de Visibilidade & Modo -->
+            <!-- Atalhos Rápidos de Visibilidade, Som & Telemetria -->
             <div class="popover-quick-toggles" id="popover-quick-toggles">
               <label class="quick-toggle-item" title="Iniciar ou reiniciar com o mapa 100% explorado e visível (sem névoa)">
                 <input type="checkbox" id="popover-chk-reveal-map" class="quick-toggle-checkbox">
@@ -203,6 +205,14 @@
               <label class="quick-toggle-item" title="Jogar sem base ou tropas inimigas (apenas construção e economia)">
                 <input type="checkbox" id="popover-chk-peaceful" class="quick-toggle-checkbox">
                 <span class="quick-toggle-label">🕊️ Construtor Pacífico</span>
+              </label>
+              <label class="quick-toggle-item" title="Ativar ou mutar efeitos sonoros sintetizados">
+                <input type="checkbox" id="popover-chk-sound" class="quick-toggle-checkbox" checked>
+                <span class="quick-toggle-label">🔊 Áudio / Efeitos</span>
+              </label>
+              <label class="quick-toggle-item" title="Exibir painel flutuante de Telemetria RTS sob demanda">
+                <input type="checkbox" id="popover-chk-telemetry" class="quick-toggle-checkbox">
+                <span class="quick-toggle-label">📊 Telemetria RTS</span>
               </label>
             </div>
 
@@ -250,7 +260,7 @@
       </div>
 
       <!-- Age of Empires style Resource Bar -->
-      <div class="ui-overlay resource-bar" id="resource-bar">
+      <div class="ui-overlay resource-bar resources-hud" id="resource-bar">
         <div class="resource-item" id="res-wood" title="Madeira">
           <span class="res-icon">🪵</span>
           <div class="res-text">
@@ -284,68 +294,6 @@
           <div class="res-text">
             <span class="res-label">População</span>
             <span class="res-value" id="res-pop-value">0</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Top Right Telemetry Panel -->
-      <div id="telemetry-panel" class="ui-overlay telemetry-panel is-collapsed">
-        <div id="telemetry-header" class="telemetry-header" title="Alternar visualização da Telemetria RTS">
-          <div class="telemetry-title">
-            <span class="telemetry-icon">📊</span>
-            <span>Telemetria RTS</span>
-          </div>
-          <span id="telemetry-toggle-icon" class="telemetry-toggle-icon">▾</span>
-        </div>
-        <div id="telemetry-body" class="telemetry-body">
-          <div class="telemetry-row">
-            <span class="telemetry-label">Alvo (X, Z):</span>
-            <span id="telemetry-cam-pos" class="telemetry-val">0.0, 0.0</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Frustum Zoom:</span>
-            <span id="telemetry-frustum" class="telemetry-val">28.0</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Célula Cursor:</span>
-            <span id="telemetry-tile" class="telemetry-val">[0, 0]</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Terreno:</span>
-            <span id="telemetry-walkable" class="telemetry-val" style="color: #38bdf8;">Caminhável</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Selecionadas:</span>
-            <span id="telemetry-selected-count" class="telemetry-val" style="color: #4ade80;">0</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Lenhadores:</span>
-            <span id="telemetry-woodcutters" class="telemetry-val" style="color: #fbbf24;">0</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Árvores:</span>
-            <span id="telemetry-trees" class="telemetry-val">0</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">Objetivo:</span>
-            <span id="telemetry-objective" class="telemetry-val" style="color: #f59e0b;">⚔️ Destruir Centro da Cidade Inimigo</span>
-          </div>
-          <div class="telemetry-actions">
-            <button id="btn-spawn-unit" class="btn-telemetry" title="Criar novo aldeão no cursor (ou Tecla U - grátis debug)">
-              <span>+</span> Criar (U)
-            </button>
-            <button id="btn-reset-cam" class="btn-telemetry" title="Centralizar câmera no Town Center">
-              <span>↺</span> Câmera
-            </button>
-            <button id="btn-clear-units" class="btn-telemetry" title="Remover unidades">
-              <span>✕</span> Limpar
-            </button>
-            <button id="btn-test-farm-mill" class="btn-telemetry" title="Construir Moinho & Fazenda de Teste com Agricultor Ativo">
-              <span>🌾</span> Moinho & Fazenda
-            </button>
-            <button id="btn-test-walls-gates" class="btn-telemetry" title="Testar Fortificações (Graduar Arquiteto, Ergue Muralhas e Portão Funcional)">
-              <span>🧱</span> Teste Fortes
-            </button>
           </div>
         </div>
       </div>
@@ -1024,6 +972,8 @@
             </div>
             <span class="unit-card-role" id="unit-card-role">Cidadão</span>
           </div>
+          <button type="button" id="btn-toggle-unit-card" class="btn-toggle-expand" title="Expandir/recolher detalhes" aria-expanded="false">ℹ️</button>
+          <button type="button" id="btn-close-unit-card" class="btn-close-panel" title="Desmarcar unidade (Esc)">✕</button>
         </div>
         <div class="unit-card-stats">
           <div class="unit-hp-bar-track">
@@ -1056,10 +1006,14 @@
       </div>
 
       <!-- Mobile Tactical Floating Controls (Bottom Right, above Minimap) -->
-      <div class="mobile-tactical-controls" id="mobile-tactical-controls">
-        <button type="button" id="btn-mobile-action-mode" class="btn-mobile-action-mode" title="Alternar Modo de Toque (Selecionar vs Ordem Direta)">
+      <div class="mobile-tactical-controls touch-controls-bar" id="mobile-tactical-controls">
+        <button type="button" id="btn-deselect-current" class="btn-deselect-current" title="Desmarcar seleção atual (Esc)" style="display: none;">
+          <span class="deselect-icon">✕</span>
+          <span class="deselect-label">Desmarcar</span>
+        </button>
+        <button type="button" id="btn-mobile-action-mode" class="btn-mobile-action-mode" title="Alternar Modo de Toque (Modo Seleção vs Modo Comando)">
           <span class="mode-icon">👆</span>
-          <span class="mode-text">Selecionar / Mover</span>
+          <span class="mode-text">Seleção</span>
         </button>
         <button type="button" id="btn-toggle-fullscreen" class="btn-hud-fullscreen btn-toggle-fullscreen" title="Alternar Tela Cheia">
           <span class="fullscreen-icon">⛶</span>
@@ -1108,6 +1062,9 @@
             </button>
             <button type="button" id="btn-pause-settings" class="btn-pause-action" title="Ajustar configurações da partida">
               <span class="btn-icon">⚙️</span> Configurações
+            </button>
+            <button type="button" id="btn-pause-restart" class="btn-pause-action btn-pause-warning" title="Reiniciar a partida do zero">
+              <span class="btn-icon">🔄</span> Reiniciar Partida
             </button>
             <button type="button" id="btn-pause-fullscreen" class="btn-pause-action btn-toggle-fullscreen" title="Alternar Tela Cheia">
               <span class="btn-icon">⛶</span> Alternar Tela Cheia
@@ -1183,8 +1140,11 @@
           </div>
 
           <div class="game-over-actions">
-            <button id="btn-restart-game" class="btn-game-over">
+            <button id="btn-gameover-restart" class="btn-game-over btn-endgame-action btn-primary">
               <span class="btn-icon">↺</span> Jogar Novamente
+            </button>
+            <button id="btn-game-over-menu" class="btn-game-over btn-game-over-secondary">
+              <span class="btn-icon">🚪</span> Menu Principal
             </button>
           </div>
         </div>
@@ -1214,7 +1174,11 @@
 
           <!-- Abas de Navegação -->
           <div class="config-tabs-nav" role="tablist">
-            <button type="button" class="config-tab-btn active" data-tab="tab-structures">
+            <button type="button" class="config-tab-btn active" data-tab="tab-audio">
+              <span class="tab-icon">🔊</span>
+              <span class="tab-label">Áudio & Som</span>
+            </button>
+            <button type="button" class="config-tab-btn" data-tab="tab-structures">
               <span class="tab-icon">🛡️</span>
               <span class="tab-label">Estruturas & HP</span>
             </button>
@@ -1234,8 +1198,50 @@
 
           <!-- Conteúdo das Abas -->
           <div class="config-tabs-content">
-            <!-- ABA 1: Estruturas & HP -->
-            <div id="tab-structures" class="config-tab-pane active">
+            <!-- ABA 1: Áudio & Som (Dedicada) -->
+            <div id="tab-audio" class="config-tab-pane active">
+              <div class="config-section-header">
+                <h3 class="config-section-title">🔊 Efeitos Sonoros & Volume Geral</h3>
+                <p class="config-section-desc">Controle de síntese de áudio procedural em tempo real via Web Audio API.</p>
+              </div>
+
+              <!-- Toggle de Efeitos Sonoros -->
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🔊</span>
+                    <span class="config-name">Efeitos Sonoros</span>
+                    <span class="config-value-badge" id="val-settings-sound-status">Ativado</span>
+                  </div>
+                  <p class="config-hint">Ativa ou desativa a reprodução dos sons sintetizados pelo motor (coleta, construção, treino e combate).</p>
+                </div>
+                <div class="config-input-wrap">
+                  <button type="button" id="btn-toggle-sound-settings" class="btn-toggle-sound-settings" title="Alternar Som Ativado / Desativado">
+                    <span id="settings-sound-icon" class="btn-icon">🔊</span>
+                    <span id="settings-sound-label">Efeitos Sonoros: Ativado</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Volume Geral dos Efeitos -->
+              <div class="config-row">
+                <div class="config-info">
+                  <div class="config-label-line">
+                    <span class="config-icon">🎚️</span>
+                    <label for="settings-volume-slider" class="config-name">Volume Geral dos Sons</label>
+                    <span class="config-value-badge" id="val-settings-volume">70%</span>
+                  </div>
+                  <p class="config-hint">Ajusta o ganho mestre da Web Audio API (0 a 1).</p>
+                </div>
+                <div class="config-input-wrap">
+                  <input type="range" id="settings-volume-slider" min="0" max="1" step="0.05" value="0.7" class="config-slider">
+                  <div class="slider-ticks"><span>0.0 (Mudo)</span><span>0.7 (Padrão)</span><span>1.0 (Máximo)</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ABA 2: Estruturas & HP -->
+            <div id="tab-structures" class="config-tab-pane">
               <div class="config-row">
                 <div class="config-info">
                   <div class="config-label-line">
@@ -1531,12 +1537,41 @@
 
           <!-- Rodapé de Ações -->
           <div class="match-config-footer">
-            <button type="button" id="btn-reset-match-config" class="btn-config-secondary" title="Redefinir para valores equilibrados padrão">
-              <span class="btn-icon">↺</span> Restaurar Padrões
+            <div class="settings-modal-footer">
+              <span class="game-version-tag">Domain of Tiles • v1.0.0</span>
+            </div>
+            <div class="match-config-footer-buttons">
+              <button type="button" id="btn-reset-match-config" class="btn-config-secondary" title="Redefinir para valores equilibrados padrão">
+                <span class="btn-icon">↺</span> Restaurar Padrões
+              </button>
+              <button type="button" id="btn-start-match" class="btn-config-primary" title="Confirmar configurações e começar o jogo">
+                <span class="btn-icon">⚔️</span> <span id="btn-start-match-label">Iniciar Partida</span>
+              </button>
+            </div>
+          </div>
+          <div class="settings-modal-actions" id="settings-modal-actions">
+            <button id="btn-settings-restart-match" class="btn-action-warning" type="button">
+              🔄 Reiniciar Partida
             </button>
-            <button type="button" id="btn-start-match" class="btn-config-primary" title="Confirmar configurações e começar o jogo">
-              <span class="btn-icon">⚔️</span> <span id="btn-start-match-label">Iniciar Partida</span>
+            <button id="btn-settings-main-menu" class="btn-action-secondary" type="button">
+              🚪 Menu Principal
             </button>
+            <button id="btn-settings-close" class="btn-action-primary" type="button">
+              ▶ Retomar Jogo
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Caixa de Diálogo de Confirmação de Reinício -->
+      <div id="confirm-restart-dialog" class="confirm-dialog-overlay hidden">
+        <div class="confirm-dialog-card">
+          <div class="confirm-icon">⚠️</div>
+          <h3 class="confirm-title">Reiniciar Partida?</h3>
+          <p class="confirm-desc">Todo o seu progresso nesta partida será perdido e um novo mapa será gerado.</p>
+          <div class="confirm-actions">
+            <button id="btn-confirm-restart-yes" class="btn-danger">Sim, Reiniciar</button>
+            <button id="btn-confirm-restart-no" class="btn-neutral">Cancelar</button>
           </div>
         </div>
       </div>
@@ -1686,6 +1721,113 @@
       <div id="save-toast" class="save-toast" role="status" aria-live="polite">
         <span class="toast-icon" id="save-toast-icon">💾</span>
         <span class="toast-message" id="save-toast-msg">Partida salva com sucesso!</span>
+      </div>
+
+      <!-- MODAL: CONFIGURAÇÃO DA NOVA PARTIDA -->
+      <div id="modal-new-game-setup" class="game-modal-overlay hidden" style="display: none;">
+        <div class="game-modal-card setup-card">
+          <div class="modal-header">
+            <h2 class="modal-title">⚔️ Nova Partida</h2>
+            <button id="btn-close-setup-modal" class="btn-close-modal" type="button" title="Fechar">✕</button>
+          </div>
+
+          <!-- SELEÇÃO DE MODO DE JOGO -->
+          <div class="setup-section">
+            <label class="setup-section-label">Selecione o Modo de Jogo:</label>
+            <div class="mode-cards-grid">
+              <!-- Modo Combate -->
+              <div id="card-mode-combat" class="mode-card active" data-mode="COMBAT">
+                <div class="mode-icon">⚔️</div>
+                <div class="mode-info">
+                  <h3 class="mode-title">Combate & Conquista</h3>
+                  <p class="mode-desc">Enfrente a IA rival simétrica. Defenda sua colônia e destrua o Centro da Cidade inimigo.</p>
+                </div>
+              </div>
+
+              <!-- Modo Construção -->
+              <div id="card-mode-builder" class="mode-card" data-mode="BUILDER">
+                <div class="mode-icon">🕊️</div>
+                <div class="mode-info">
+                  <h3 class="mode-title">Construção Pacífica</h3>
+                  <p class="mode-desc">Sem tropas inimigas. Foque na expansão econômica, educação e arquitetura livre.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OPÇÕES ESPECÍFICAS DO MODO COMBATE -->
+          <div id="combat-specific-options" class="setup-section">
+            <label class="setup-section-label">Dificuldade da IA Inimiga:</label>
+            <div class="difficulty-selector">
+              <button type="button" class="btn-diff-option" data-diff="EASY">
+                🌱 Fácil
+                <span class="diff-hint">IA trabalha mais lento e demora para atacar</span>
+              </button>
+              <button type="button" class="btn-diff-option active" data-diff="MEDIUM">
+                ⚔️ Médio
+                <span class="diff-hint">Equilibrado e dinâmico (Padrão)</span>
+              </button>
+              <button type="button" class="btn-diff-option" data-diff="HARD">
+                🔥 Difícil
+                <span class="diff-hint">IA rápida, agressiva e ataques frequentes</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- RESUMO DAS CONFIGURAÇÕES PRÉ-DEFINIDAS -->
+          <div class="setup-summary-box">
+            <div class="summary-item">
+              <span class="summary-label">🗺️ Tamanho do Mapa:</span>
+              <strong id="summary-map-size">Grande (80×80)</strong>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">🌫️ Névoa de Guerra:</span>
+              <strong id="summary-fog-state">Ativa (Exploração clássica)</strong>
+            </div>
+          </div>
+
+          <!-- RODAPÉ DE AÇÕES DO MODAL -->
+          <div class="modal-footer-actions">
+            <button id="btn-setup-open-settings" class="btn-action-neutral" type="button">
+              ⚙️ Configurações Avançadas
+            </button>
+            <div class="modal-footer-right">
+              <button id="btn-setup-cancel" class="btn-action-secondary" type="button">Cancelar</button>
+              <button id="btn-setup-start-game" class="btn-action-primary" type="button">▶ Iniciar Batalha</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODAL: SOBRE O JOGO -->
+      <div id="modal-about-game" class="game-modal-overlay hidden" style="display: none;">
+        <div class="game-modal-card about-card">
+          <div class="modal-header">
+            <h2 class="modal-title">ℹ️ Sobre o Domain of Tiles</h2>
+            <button id="btn-close-about-modal" class="btn-close-modal" type="button" title="Fechar">✕</button>
+          </div>
+          <div class="about-content">
+            <div class="about-header-badge">
+              <span class="about-game-icon">🏰</span>
+              <div>
+                <h3 class="about-game-name">Domain of Tiles</h3>
+                <span class="about-game-version">Versão v1.1.0</span>
+              </div>
+            </div>
+            <p class="about-desc">
+              Um jogo de estratégia em tempo real (RTS) isométrico desenvolvido com Three.js e TypeScript.
+            </p>
+            <div class="about-features-preview">
+              <div class="about-feature-item">🌲 Coleta dinâmica de madeira, comida, ouro e pedra</div>
+              <div class="about-feature-item">🏛️ Construção livre, canteiro de obras e reparos</div>
+              <div class="about-feature-item">🎓 Educação avançada com Colégio e especializações de elite</div>
+              <div class="about-feature-item">⚔️ Batalhas de cerco contra IA simétrica ou modo Sandbox pacífico</div>
+            </div>
+          </div>
+          <div class="modal-footer-actions about-footer">
+            <button id="btn-close-about-btn" class="btn-action-primary" type="button">Fechar</button>
+          </div>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

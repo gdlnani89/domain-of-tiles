@@ -50,7 +50,11 @@
     },
     "linux": {
       "target": "AppImage",
-      "category": "Game"
+      "category": "Game",
+      "artifactName": "Domain-of-Tiles-${version}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Domain-of-Tiles-Setup-${version}.${ext}"
     }
   }
 }

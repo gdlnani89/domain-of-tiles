@@ -71,44 +71,79 @@ function createWindow() {
   setupAutoUpdater();
 }
 
+function sendToRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
 function setupAutoUpdater() {
+  // Força download completo e desativa downloads diferenciais (.blockmap) que travam em 0%
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.disableWebInstaller = true;
+  // API real do electron-updater 6.x
+  autoUpdater.disableDifferentialDownload = true;
+  // Compatibilidade com configurações legadas
+  if (autoUpdater.differentialDownloadConfig) {
+    autoUpdater.differentialDownloadConfig.disabled = true;
+  }
+
+  // Logs detalhados para diagnóstico no terminal
+  autoUpdater.logger = {
+    info: (msg) => console.log('[AutoUpdater INFO]', msg),
+    warn: (msg) => console.warn('[AutoUpdater WARN]', msg),
+    error: (msg) => console.error('[AutoUpdater ERROR]', msg),
+    debug: (msg) => console.log('[AutoUpdater DEBUG]', msg)
+  };
 
   autoUpdater.on('update-available', (info) => {
     console.log('[AutoUpdater] Atualização disponível:', info);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-available', info);
-    }
+    sendToRenderer('update-available', info);
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-progress', progressObj);
-    }
+    const rawPercent = Number(progressObj && progressObj.percent);
+    const percent = Number.isFinite(rawPercent) ? Math.round(rawPercent) : 0;
+    const transferredBytes = (progressObj && progressObj.transferred) || 0;
+    const totalBytes = (progressObj && progressObj.total) || 0;
+    const bytesPerSecond = (progressObj && progressObj.bytesPerSecond) || 0;
+    const transferredMB = (transferredBytes / (1024 * 1024)).toFixed(1);
+    const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+    const speedKB = (bytesPerSecond / 1024).toFixed(0);
+
+    console.log(`[Update] Progresso: ${percent}% (${transferredMB}MB / ${totalMB}MB a ${speedKB} KB/s)`);
+
+    sendToRenderer('update-progress', {
+      percent,
+      transferred: transferredMB,
+      total: totalMB,
+      speed: speedKB,
+      bytesPerSecond
+    });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    console.log('[AutoUpdater] Atualização baixada com sucesso:', info);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-downloaded', info);
-    }
+    console.log('[Update] Download concluído com sucesso!', info);
+    sendToRenderer('update-downloaded', info);
   });
 
   autoUpdater.on('error', (err) => {
-    console.error('[AutoUpdater] Erro de atualização:', err);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-error', err ? (err.message || String(err)) : 'Erro desconhecido');
-    }
+    console.error('[Update ERROR]', err);
+    sendToRenderer('update-error', err ? (err.message || String(err)) : 'Erro desconhecido');
   });
 
   // IPC Handlers para comunicação segura com o renderer
   ipcMain.handle('start-download-update', async () => {
+    console.log('[AutoUpdater] Iniciando download do instalador...');
     try {
-      return await autoUpdater.downloadUpdate();
+      await autoUpdater.downloadUpdate();
+      return { success: true };
     } catch (err) {
       console.error('[AutoUpdater] Falha ao iniciar download:', err);
-      throw err;
+      const message = (err && err.message) || 'Falha ao baixar o arquivo da Release.';
+      sendToRenderer('update-error', message);
+      return { success: false, error: message };
     }
   });
 

@@ -7,11 +7,12 @@ class SoundManager {
   public ctx: AudioContext | null = null;
   public masterGain: GainNode | null = null;
   public isMuted: boolean = false;
+  public masterVolume: number = 0.75;
   private noiseBuffer: AudioBuffer | null = null;
   private lastPlayTimes: Record<string, number> = {};
 
   constructor() {
-    // Carrega preferência persistente de mudo
+    // Carrega preferência persistente de mudo e volume
     try {
       const saved = localStorage.getItem('rts_sound_muted');
       if (saved !== null) {
@@ -19,8 +20,16 @@ class SoundManager {
       } else {
         this.isMuted = false;
       }
+      const savedVol = localStorage.getItem('rts_sound_volume');
+      if (savedVol !== null) {
+        const v = parseFloat(savedVol);
+        if (!isNaN(v) && v >= 0 && v <= 1) {
+          this.masterVolume = v;
+        }
+      }
     } catch {
       this.isMuted = false;
+      this.masterVolume = 0.75;
     }
   }
 
@@ -34,12 +43,12 @@ class SoundManager {
       this.ctx = new AudioCtxClass();
 
       this.masterGain = this.ctx.createGain();
-      const currentVol = this.isMuted ? 0 : 0.75;
+      const currentVol = this.isMuted ? 0 : this.masterVolume;
       this.masterGain.gain.setValueAtTime(currentVol, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     } else if (!this.masterGain) {
       this.masterGain = this.ctx.createGain();
-      const currentVol = this.isMuted ? 0 : 0.75;
+      const currentVol = this.isMuted ? 0 : this.masterVolume;
       this.masterGain.gain.setValueAtTime(currentVol, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
     }
@@ -50,7 +59,7 @@ class SoundManager {
 
     // Garante que o ganho mestre esteja com volume audível se não estiver mutado
     if (!this.isMuted && this.masterGain && this.masterGain.gain.value === 0) {
-      this.masterGain.gain.setValueAtTime(0.75, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
     }
 
     return this.ctx;
@@ -64,6 +73,30 @@ class SoundManager {
     return this.isMuted;
   }
 
+  public getVolume(): number {
+    return this.masterVolume;
+  }
+
+  public getMasterVolume(): number {
+    return this.masterVolume;
+  }
+
+  public setVolume(val: number): void {
+    this.masterVolume = Math.max(0, Math.min(1, val));
+    try {
+      localStorage.setItem('rts_sound_volume', String(this.masterVolume));
+    } catch {}
+    if (this.ctx && this.masterGain && !this.isMuted) {
+      const now = this.ctx.currentTime;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.linearRampToValueAtTime(this.masterVolume, now + 0.05);
+    }
+  }
+
+  public setMasterVolume(val: number): void {
+    this.setVolume(val);
+  }
+
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     try {
@@ -73,7 +106,7 @@ class SoundManager {
     if (this.ctx && this.masterGain) {
       const now = this.ctx.currentTime;
       this.masterGain.gain.cancelScheduledValues(now);
-      this.masterGain.gain.linearRampToValueAtTime(this.isMuted ? 0 : 0.75, now + 0.05);
+      this.masterGain.gain.linearRampToValueAtTime(this.isMuted ? 0 : this.masterVolume, now + 0.05);
     }
 
     // Se estiver desmutando e o contexto ainda não iniciou, inicializa
