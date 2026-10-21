@@ -70,7 +70,7 @@
 
         <!-- Versão e Créditos Discretos -->
         <div class="menu-footer">
-          <span class="menu-footer-credits">v1.1.0</span>
+          <span class="menu-footer-credits">v2.0.0</span>
         </div>
       </div>
 
@@ -961,7 +961,22 @@
         </div>
       </div>
 
-      <!-- Selected Unit HUD Card (Active when a unit is selected) -->
+      <!-- PAINEL DE SELEÇÃO MÚLTIPLA (Oculto por padrão) -->
+      <div id="multi-selection-panel" class="multi-selection-container hidden">
+        <div class="multi-selection-header">
+          <div class="multi-selection-title">
+            <span class="multi-icon">👥</span>
+            <span id="multi-selection-total-count">0 Unidades Selecionadas</span>
+          </div>
+          <button type="button" id="btn-multi-deselect-all" class="btn-multi-close" title="Desmarcar Todos [Esc]">✕</button>
+        </div>
+
+        <div class="multi-selection-subgroups-grid" id="multi-subgroups-grid">
+          <!-- Inserido dinamicamente via TypeScript -->
+        </div>
+      </div>
+
+      <!-- Selected Unit HUD Card (Active when a single unit is selected) -->
       <div class="ui-overlay unit-card-panel" id="unit-card-panel" style="display: none;">
         <div class="unit-card-header">
           <div class="unit-card-avatar" id="unit-card-avatar">👨‍🌾</div>
@@ -1811,7 +1826,7 @@
               <span class="about-game-icon">🏰</span>
               <div>
                 <h3 class="about-game-name">Domain of Tiles</h3>
-                <span class="about-game-version">Versão v1.1.0</span>
+                <span class="about-game-version">Versão v2.0.0</span>
               </div>
             </div>
             <p class="about-desc">

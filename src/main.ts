@@ -269,6 +269,7 @@ export const TC_WORLD_CENTER = new THREE.Vector3(
 );
 
 export const enemyCampCoord = { x: 0, z: 0, size: 3 };
+export let enemyCampState: any = null;
 
 /**
  * Sorteia aleatoriamente a posição do Town Center aliado em um quadrante do mapa
@@ -6900,13 +6901,13 @@ function createGhostCollege(): THREE.Group {
 const ghostMatValid = new THREE.MeshBasicMaterial({
   color: 0x22c55e,
   transparent: true,
-  opacity: 0.42,
+  opacity: 0.6,
   depthWrite: false
 });
 const ghostMatInvalid = new THREE.MeshBasicMaterial({
   color: 0xef4444,
   transparent: true,
-  opacity: 0.45,
+  opacity: 0.6,
   depthWrite: false
 });
 const ghostEdgeMatValid = new THREE.LineBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.9 });
@@ -7573,7 +7574,145 @@ ghostArcheryGroup = createGhostArcheryRange();
 let isPlacementMode = false;
 let ghostGridX = 0;
 let ghostGridZ = 0;
-let isGhostValid = false;
+export let isGhostValid = false;
+
+export function getBuildingDimensions(type: string): { width: number; height: number } {
+  switch (type) {
+    case 'TOWN_CENTER':
+    case 'COLLEGE':
+      return { width: 3, height: 3 };
+    case 'BARRACKS':
+    case 'ARCHERY_RANGE':
+    case 'MILL':
+    case 'LUMBER_CAMP':
+    case 'MINING_CAMP':
+    case 'FARM':
+    case 'SCHOOL':
+      return { width: 2, height: 2 };
+    case 'GATE':
+      return { width: 2, height: 1 };
+    case 'HOUSE':
+    case 'WALL':
+    case 'STONE_WALL':
+    case 'TOWER':
+    case 'WATCHTOWER':
+      return { width: 1, height: 1 };
+    default:
+      return { width: 1, height: 1 };
+  }
+}
+
+export function isCellOccupiedByBuilding(gridX: number, gridZ: number): boolean {
+  const gx = Math.round(gridX);
+  const gz = Math.round(gridZ);
+
+  // 1. Town Center Aliado (3x3)
+  if (tcCoord && gx >= tcCoord.minX && gx <= tcCoord.maxX && gz >= tcCoord.minZ && gz <= tcCoord.maxZ) {
+    if (!townCenterState || !townCenterState.isDestroyed) {
+      return true;
+    }
+  }
+
+  // 2. Acampamento / Town Center Inimigo (3x3)
+  if (hasEnemyFaction && enemyCampCoord) {
+    const ecSize = enemyCampCoord.size || 3;
+    if (gx >= enemyCampCoord.x && gx < enemyCampCoord.x + ecSize &&
+        gz >= enemyCampCoord.z && gz < enemyCampCoord.z + ecSize) {
+      if (!enemyCampState || !enemyCampState.isTentDestroyed) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Mapeamento direto em buildingsGridMap (O(1))
+  const mapped = buildingsGridMap.get(cellKey(gx, gz));
+  if (mapped && (mapped.hp === undefined || mapped.hp > 0) && mapped.group?.parent !== null) {
+    return true;
+  }
+
+  // 4. Tiles de muralhas / portões bloqueados
+  if (blockedGridTiles.has(`${gx},${gz}`)) {
+    return true;
+  }
+
+  // 5. Varredura completa em buildingsList (prontos e em obras, aliados e inimigos)
+  for (const b of buildingsList) {
+    if (b.hp !== undefined && b.hp <= 0) continue;
+    if (b.group && b.group.parent === null) continue;
+
+    const dims = getBuildingDimensions(b.type);
+    const width = b.sizeX || (b.size && b.type !== 'GATE' && b.type !== 'HOUSE' ? b.size : dims.width);
+    const height = b.sizeZ || (b.size && b.type !== 'GATE' && b.type !== 'HOUSE' ? b.size : dims.height);
+    const bx = Math.round(b.gridX);
+    const bz = Math.round(b.gridZ);
+
+    if (gx >= bx && gx < bx + width && gz >= bz && gz < bz + height) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isCellOccupiedByResource(gridX: number, gridZ: number): boolean {
+  const k = cellKey(Math.round(gridX), Math.round(gridZ));
+  const tree = treesMap.get(k);
+  if (tree && tree.wood > 0 && !tree.depleting) return true;
+  const bush = berryBushesMap.get(k);
+  if (bush && bush.food > 0) return true;
+  const stone = stoneMinesMap.get(k);
+  if (stone && stone.stone > 0) return true;
+  const gold = goldMinesMap.get(k);
+  if (gold && gold.gold > 0) return true;
+  return false;
+}
+
+export function isValidBuildingPlacement(targetX: number, targetZ: number, buildingType: string): boolean {
+  const dims = getBuildingDimensions(buildingType);
+  const startX = Math.round(targetX);
+  const startZ = Math.round(targetZ);
+
+  // 1. Limites do mapa
+  for (let dx = 0; dx < dims.width; dx++) {
+    for (let dz = 0; dz < dims.height; dz++) {
+      const cx = startX + dx;
+      const cz = startZ + dz;
+      if (!isCellInside(cx, cz)) {
+        return false;
+      }
+    }
+  }
+
+  // 2. Itera por TODAS as células da pegada do novo edifício
+  for (let dx = 0; dx < dims.width; dx++) {
+    for (let dz = 0; dz < dims.height; dz++) {
+      const cx = startX + dx;
+      const cz = startZ + dz;
+
+      // a) Verifica se há outro edifício (pronto ou em obras, aliado ou inimigo) ocupando esta célula
+      if (isCellOccupiedByBuilding(cx, cz)) {
+        return false;
+      }
+
+      // b) Verifica se há recursos naturais bloqueantes (árvores, minas, pedras, arbustos)
+      if (isCellOccupiedByResource(cx, cz)) {
+        return false;
+      }
+
+      // c) Verifica se a célula é terreno andável (não é penhasco, água ou terreno inválido)
+      if (!isCellWalkable(cx, cz)) {
+        return false;
+      }
+
+      // d) Verifica se há unidade viva ocupando a célula
+      if (isCellOccupiedByUnit(cx, cz)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
 
 function isCellOccupiedByUnit(gx: number, gz: number): boolean {
   for (const u of unitsList) {
@@ -7590,6 +7729,8 @@ function isPlacementValid(gx: number, gz: number, sizeX = 2, sizeZ = sizeX): boo
       const cx = gx + dx;
       const cz = gz + dz;
       if (!isCellInside(cx, cz)) return false;
+      if (isCellOccupiedByBuilding(cx, cz)) return false;
+      if (isCellOccupiedByResource(cx, cz)) return false;
       if (!isCellWalkable(cx, cz)) return false;
       if (isCellOccupiedByUnit(cx, cz)) return false;
     }
@@ -7984,6 +8125,21 @@ const unitCardHpTextEl = document.getElementById('unit-card-hp-text');
 const unitCardCarryTextEl = document.getElementById('unit-card-carry-text');
 const unitCardPerksEl = document.getElementById('unit-card-perks');
 
+// Painel de Seleção Múltipla (#multi-selection-panel)
+const multiSelectionPanelEl = document.getElementById('multi-selection-panel');
+const multiSelectionTotalCountEl = document.getElementById('multi-selection-total-count');
+const multiSubgroupsGridEl = document.getElementById('multi-subgroups-grid');
+const btnMultiDeselectAll = document.getElementById('btn-multi-deselect-all');
+
+btnMultiDeselectAll?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  deselectAllUnits();
+  deselectBuilding();
+  deselectTownCenter();
+  updateDeselectButtonVisibility();
+  soundManager.uiClick();
+});
+
 function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
   if (isGameOver) return;
 
@@ -8223,6 +8379,12 @@ function exitPlacementMode() {
 }
 
 function placeArcheryRange(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'ARCHERY_RANGE')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < ARCHERY_RANGE_COST_WOOD || resources.stone < ARCHERY_RANGE_COST_STONE) {
     console.log('[RTS Construção] Recursos insuficientes para Campo de Tiro com Arco!');
     exitPlacementMode();
@@ -8250,6 +8412,12 @@ function placeArcheryRange(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeBarracks(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'BARRACKS')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < BARRACKS_COST_WOOD) {
     console.log('[RTS Construção] Madeira insuficiente para fundação!');
     exitPlacementMode();
@@ -8276,6 +8444,12 @@ function placeBarracks(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeTower(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'TOWER')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 0.5, 2.0, gz + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (!hasLivingArchitect()) {
     soundManager.popCappedAlert();
     spawnFloatingText(
@@ -8314,6 +8488,12 @@ function placeTower(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeLumberCamp(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'LUMBER_CAMP')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < LUMBER_CAMP_COST_WOOD) {
     console.log('[RTS Construção] Madeira insuficiente para Madeireira!');
     exitPlacementMode();
@@ -8338,6 +8518,12 @@ function placeLumberCamp(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeMiningCamp(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'MINING_CAMP')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < MINING_CAMP_COST_WOOD) {
     console.log('[RTS Construção] Madeira insuficiente para Campo de Mineração!');
     exitPlacementMode();
@@ -8362,6 +8548,12 @@ function placeMiningCamp(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeHouse(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'HOUSE')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 0.5, 2.0, gz + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < HOUSE_COST_WOOD) {
     console.log('[RTS Construção] Madeira insuficiente para Casa!');
     exitPlacementMode();
@@ -8386,6 +8578,12 @@ function placeHouse(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeMill(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'MILL')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < MILL_COST_WOOD) {
     console.log(`[RTS Construção] Madeira insuficiente para Moinho (${resources.wood}/${MILL_COST_WOOD} 🪵)!`);
     exitPlacementMode();
@@ -8410,6 +8608,12 @@ function placeMill(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeFarm(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'FARM')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (!hasLivingAgronomist()) {
     soundManager.popCappedAlert();
     spawnFloatingText(
@@ -8445,6 +8649,12 @@ function placeFarm(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeSchool(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'SCHOOL')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1, 2.0, gz + 1), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < SCHOOL_COST_WOOD || resources.stone < SCHOOL_COST_STONE) {
     console.log(`[RTS Construção] Recursos insuficientes para Escola (${resources.wood}/${SCHOOL_COST_WOOD} 🪵, ${resources.stone}/${SCHOOL_COST_STONE} 🪨)!`);
     exitPlacementMode();
@@ -8470,6 +8680,12 @@ function placeSchool(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeCollege(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'COLLEGE')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1.5, 2.0, gz + 1.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (resources.wood < COLLEGE_COST_WOOD || resources.stone < COLLEGE_COST_STONE || resources.gold < COLLEGE_COST_GOLD) {
     console.log(`[RTS Construção] Recursos insuficientes para Faculdade (${resources.wood}/${COLLEGE_COST_WOOD} 🪵, ${resources.stone}/${COLLEGE_COST_STONE} 🪨, ${resources.gold}/${COLLEGE_COST_GOLD} 🪙)!`);
     exitPlacementMode();
@@ -8496,6 +8712,12 @@ function placeCollege(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeWall(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'WALL')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 0.5, 2.0, gz + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (!hasLivingArchitect()) {
     soundManager.popCappedAlert();
     spawnFloatingText(
@@ -8530,6 +8752,12 @@ function placeWall(gx: number, gz: number, shiftKey: boolean = false) {
 }
 
 function placeGate(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'GATE')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1.0, 2.0, gz + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
   if (!hasLivingArchitect()) {
     soundManager.popCappedAlert();
     spawnFloatingText(
@@ -10048,21 +10276,72 @@ unitCardPanelEl?.addEventListener('click', (e) => {
 });
 unitCardMobileMQ.addEventListener('change', applyUnitCardMobileState);
 
-function updateUnitHUD() {
-  updateDeselectButtonVisibility();
+function getUnitTypeMeta(unitType: string): { name: string; icon: string } {
+  switch (unitType) {
+    case 'VILLAGER':
+      return { name: 'Aldeões', icon: '🧑' };
+    case 'SWORDSMAN':
+      return { name: 'Guerreiros', icon: '⚔️' };
+    case 'ARCHER':
+      return { name: 'Arqueiros', icon: '🏹' };
+    case 'DOCTOR':
+    case 'MEDIC':
+      return { name: 'Médicos', icon: '⚕️' };
+    case 'ARCHITECT':
+      return { name: 'Arquitetos', icon: '📐' };
+    case 'AGRONOMIST':
+      return { name: 'Agrônomos', icon: '🌾' };
+    case 'ARMORER':
+      return { name: 'Armeiros', icon: '🛡️' };
+    case 'ALCHEMIST':
+      return { name: 'Alquimistas', icon: '⚗️' };
+    default:
+      return { name: 'Unidades', icon: '🛡️' };
+  }
+}
+
+function getUnitGroupKey(u: RTSUnit): string {
+  if (u.unitType === 'VILLAGER') {
+    if (u.educationLevel >= 2 && u.eliteSpecialization) {
+      return u.eliteSpecialization;
+    }
+    return 'VILLAGER';
+  }
+  return u.unitType;
+}
+
+function updateUnitSelectionRings(): void {
+  for (const u of unitsList) {
+    const isSelectedAndAlive = u.isSelected && !u.isDying && !u.isGarrisoned && u.hp > 0;
+    u.selectionRing.visible = isSelectedAndAlive;
+    if (u.auraRingMesh) {
+      u.auraRingMesh.visible = isSelectedAndAlive && u.educationLevel >= 2;
+    }
+  }
+}
+
+function isolateSelectionToType(targetType: string): void {
+  for (const u of unitsList) {
+    if (u.isSelected) {
+      const match = (getUnitGroupKey(u) === targetType || u.unitType === targetType) && !u.isDying && u.hp > 0 && !u.isGarrisoned;
+      if (!match) {
+        u.isSelected = false;
+        u.selectionRing.visible = false;
+        if (u.auraRingMesh) {
+          u.auraRingMesh.visible = false;
+        }
+      }
+    }
+  }
+
+  updateUnitSelectionRings();
+  soundManager.playSelectionClick();
+  updateTelemetrySelectionCount();
+  updateUnitHUD();
+}
+
+function renderSingleUnitCard(unit: RTSUnit): void {
   if (!unitCardPanelEl) return;
-  const selected = getSelectedUnits();
-  if (selected.length !== 1) {
-    unitCardPanelEl.style.display = 'none';
-    unitCardLastUnit = null;
-    return;
-  }
-  const unit = selected[0];
-  if (unit.isDying || unit.isGarrisoned) {
-    unitCardPanelEl.style.display = 'none';
-    unitCardLastUnit = null;
-    return;
-  }
 
   if (unitCardLastUnit !== unit) {
     unitCardLastUnit = unit;
@@ -10073,6 +10352,8 @@ function updateUnitHUD() {
   if (unitCardAvatarEl) {
     if (unit.unitType === 'SWORDSMAN') {
       unitCardAvatarEl.textContent = '⚔️';
+    } else if (unit.unitType === 'ARCHER') {
+      unitCardAvatarEl.textContent = '🏹';
     } else if (unit.educationLevel >= 2) {
       unitCardAvatarEl.textContent =
         unit.eliteSpecialization === 'ARCHITECT' ? '📐' :
@@ -10088,6 +10369,8 @@ function updateUnitHUD() {
   if (unitCardNameEl) {
     if (unit.unitType === 'SWORDSMAN') {
       unitCardNameEl.textContent = 'Espadachim';
+    } else if (unit.unitType === 'ARCHER') {
+      unitCardNameEl.textContent = 'Arqueiro';
     } else if (unit.educationLevel >= 2) {
       unitCardNameEl.textContent =
         unit.eliteSpecialization === 'ARCHITECT' ? 'Arquiteto Real' :
@@ -10121,6 +10404,8 @@ function updateUnitHUD() {
       unitCardRoleEl.textContent = '🚶 Indo Reparar Estrutura';
     } else if (unit.unitType === 'SWORDSMAN') {
       unitCardRoleEl.textContent = 'Infantaria Militar Aliada';
+    } else if (unit.unitType === 'ARCHER') {
+      unitCardRoleEl.textContent = 'Atirador de Precisão Aliado';
     } else if (unit.educationLevel >= 2) {
       const specName =
         unit.eliteSpecialization === 'ARCHITECT' ? '📐 Arquiteto Mestre (Fortificações & Torres)' :
@@ -10207,6 +10492,110 @@ function updateUnitHUD() {
     }
   }
 }
+
+let lastMultiSelectionSignature: string = '';
+
+function renderMultiSelectionPanel(activeUnits: RTSUnit[]): void {
+  if (!multiSelectionPanelEl) return;
+  multiSelectionPanelEl.classList.remove('hidden');
+  multiSelectionPanelEl.style.display = 'block';
+
+  if (multiSelectionTotalCountEl) {
+    multiSelectionTotalCountEl.textContent = `${activeUnits.length} Unidades Selecionadas`;
+  }
+
+  if (!multiSubgroupsGridEl) return;
+
+  // Agrupa unidades por categoria
+  const groupsMap = new Map<string, RTSUnit[]>();
+  for (const u of activeUnits) {
+    const key = getUnitGroupKey(u);
+    const list = groupsMap.get(key) || [];
+    list.push(u);
+    groupsMap.set(key, list);
+  }
+
+  // Assinatura para evitar recriação contínua do DOM
+  const sigParts: string[] = [];
+  groupsMap.forEach((units, key) => {
+    const totalHp = units.reduce((acc, u) => acc + Math.ceil(u.hp), 0);
+    sigParts.push(`${key}:${units.length}:${totalHp}`);
+  });
+  const currentSig = sigParts.join('|');
+
+  if (currentSig === lastMultiSelectionSignature) {
+    return;
+  }
+  lastMultiSelectionSignature = currentSig;
+
+  multiSubgroupsGridEl.innerHTML = '';
+
+  groupsMap.forEach((unitsOfGroup, typeKey) => {
+    const meta = getUnitTypeMeta(typeKey);
+    const totalHp = unitsOfGroup.reduce((acc, u) => acc + u.hp, 0);
+    const totalMaxHp = unitsOfGroup.reduce((acc, u) => acc + u.maxHp, 0);
+    const hpPercent = totalMaxHp > 0 ? Math.max(0, Math.min(100, Math.round((totalHp / totalMaxHp) * 100))) : 0;
+
+    const card = document.createElement('div');
+    card.className = 'subgroup-card';
+    card.title = `Clique para selecionar apenas ${meta.name} (${unitsOfGroup.length})`;
+    card.setAttribute('data-unit-type', typeKey);
+    card.innerHTML = `
+      <div class="subgroup-header-row">
+        <span class="subgroup-icon">${meta.icon}</span>
+        <span class="subgroup-count">${unitsOfGroup.length}</span>
+      </div>
+      <span class="subgroup-name">${meta.name}</span>
+      <div class="subgroup-hp-bar">
+        <div class="subgroup-hp-fill" style="width: ${hpPercent}%;"></div>
+      </div>
+    `;
+
+    // Filtro Rápido ao Clicar no Subgrupo (Sub-selection Filter)
+    card.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isolateSelectionToType(typeKey);
+    });
+
+    multiSubgroupsGridEl.appendChild(card);
+  });
+}
+
+function updateUnitHUD(): void {
+  updateDeselectButtonVisibility();
+  const activeUnits = getSelectedUnits().filter((u) => !u.isDying && !u.isGarrisoned && u.hp > 0);
+
+  // Caso 0: Nenhuma unidade selecionada
+  if (activeUnits.length === 0) {
+    if (unitCardPanelEl) unitCardPanelEl.style.display = 'none';
+    if (multiSelectionPanelEl) {
+      multiSelectionPanelEl.classList.add('hidden');
+      multiSelectionPanelEl.style.display = 'none';
+    }
+    unitCardLastUnit = null;
+    lastMultiSelectionSignature = '';
+    return;
+  }
+
+  // Caso 1: Apenas 1 unidade selecionada -> Mostra o card individual clássico
+  if (activeUnits.length === 1) {
+    if (multiSelectionPanelEl) {
+      multiSelectionPanelEl.classList.add('hidden');
+      multiSelectionPanelEl.style.display = 'none';
+    }
+    lastMultiSelectionSignature = '';
+    renderSingleUnitCard(activeUnits[0]);
+    return;
+  }
+
+  // Caso 2: Múltiplas unidades selecionadas (2 ou mais) -> Ativa o painel de subgrupos
+  if (unitCardPanelEl) unitCardPanelEl.style.display = 'none';
+  unitCardLastUnit = null;
+  renderMultiSelectionPanel(activeUnits);
+}
+
+export const updateMultiSelectionHUD = updateUnitHUD;
+export const renderSelectionPanels = updateUnitHUD;
 
 function trainVillagerAtTownCenter() {
   if (isGameOver || townCenterState.isDestroyed) return;
@@ -12331,6 +12720,14 @@ function commandMove(unit: RTSUnit, cell: THREE.Vector2) {
 }
 
 function commandGather(unit: RTSUnit, tree: TreeResource) {
+  if (unit.unitType !== 'VILLAGER') {
+    const escortCell = findClosestWalkableCell(
+      new THREE.Vector2(tree.gridX, tree.gridZ),
+      unitCell(unit)
+    );
+    commandMove(unit, escortCell);
+    return;
+  }
   resetChopPose(unit);
   clearUnitFarmTarget(unit);
   unit.state = 'MOVING_TO_RESOURCE';
@@ -12351,6 +12748,14 @@ function commandGather(unit: RTSUnit, tree: TreeResource) {
 }
 
 function commandForage(unit: RTSUnit, bush: BerryBushResource) {
+  if (unit.unitType !== 'VILLAGER') {
+    const escortCell = findClosestWalkableCell(
+      new THREE.Vector2(bush.gridX, bush.gridZ),
+      unitCell(unit)
+    );
+    commandMove(unit, escortCell);
+    return;
+  }
   resetChopPose(unit);
   clearUnitFarmTarget(unit);
   unit.state = 'MOVING_TO_RESOURCE';
@@ -12371,6 +12776,14 @@ function commandForage(unit: RTSUnit, bush: BerryBushResource) {
 }
 
 function commandMine(unit: RTSUnit, mine: StoneMineResource) {
+  if (unit.unitType !== 'VILLAGER') {
+    const escortCell = findClosestWalkableCell(
+      new THREE.Vector2(mine.gridX, mine.gridZ),
+      unitCell(unit)
+    );
+    commandMove(unit, escortCell);
+    return;
+  }
   resetChopPose(unit);
   clearUnitFarmTarget(unit);
   unit.state = 'MOVING_TO_RESOURCE';
@@ -12391,6 +12804,14 @@ function commandMine(unit: RTSUnit, mine: StoneMineResource) {
 }
 
 function commandMineGold(unit: RTSUnit, mine: GoldMineResource) {
+  if (unit.unitType !== 'VILLAGER') {
+    const escortCell = findClosestWalkableCell(
+      new THREE.Vector2(mine.gridX, mine.gridZ),
+      unitCell(unit)
+    );
+    commandMove(unit, escortCell);
+    return;
+  }
   resetChopPose(unit);
   clearUnitFarmTarget(unit);
   unit.state = 'MOVING_TO_RESOURCE';
@@ -12411,6 +12832,14 @@ function commandMineGold(unit: RTSUnit, mine: GoldMineResource) {
 }
 
 function commandBuild(unit: RTSUnit, building: ConstructionBuilding) {
+  if (unit.unitType !== 'VILLAGER') {
+    const escortCell = findClosestWalkableCell(
+      new THREE.Vector2(building.gridX, building.gridZ),
+      unitCell(unit)
+    );
+    commandMove(unit, escortCell);
+    return;
+  }
   resetChopPose(unit);
   clearUnitFarmTarget(unit);
   unit.state = 'MOVING_TO_BUILD';
@@ -14034,49 +14463,7 @@ function executeAttack(attacker: RTSUnit, target: RTSUnit, now: number) {
   );
 
   // 5. Retaliação Imediata & Alerta de Socorro da Base (Self-Defense & Town Watch)
-  if (target.hp > 0 && !target.isDying) {
-    if (target.faction === 'PLAYER') {
-      if (target.unitType === 'SWORDSMAN') {
-        const isAlreadyDuelingMelee =
-          target.state === 'ATTACKING' &&
-          target.targetEnemy &&
-          !target.targetEnemy.isDying &&
-          target.targetEnemy.hp > 0 &&
-          Math.hypot(
-            target.group.position.x - target.targetEnemy.group.position.x,
-            target.group.position.z - target.targetEnemy.group.position.z
-          ) <= target.attackRange;
-
-        if (!isAlreadyDuelingMelee && (target.state === 'IDLE' || target.state === 'MOVING' || target.state === 'ATTACKING_STRUCTURE')) {
-          commandAttack(target, attacker);
-          spawnFloatingText(
-            target.group.position.clone().add(new THREE.Vector3(0, 1.4, 0)),
-            '⚔️ Contra-Atacar!',
-            '#38bdf8'
-          );
-        }
-      } else if (target.unitType === 'VILLAGER') {
-        const distToAttacker = Math.hypot(
-          target.group.position.x - attacker.group.position.x,
-          target.group.position.z - attacker.group.position.z
-        );
-        if (target.state === 'IDLE' && distToAttacker <= 2.0) {
-          commandAttack(target, attacker);
-          spawnFloatingText(
-            target.group.position.clone().add(new THREE.Vector3(0, 1.4, 0)),
-            '👨‍🌾 Revidar!',
-            '#facc15'
-          );
-        }
-        // Grito de socorro do aldeão: chama soldados aliados ociosos num raio de 10.0 células
-        callAlliedSoldiersForHelp(target.group.position, attacker, 10.0);
-      }
-    } else if (target.faction === 'ENEMY') {
-      if (target.state === 'IDLE' && !target.targetEnemy) {
-        commandAttack(target, attacker);
-      }
-    }
-  }
+  onUnitDamagedByEnemy(target, attacker);
 
   // 6. Morte ao zerar HP
   if (target.hp <= 0 && !target.isDying) {
@@ -14339,6 +14726,100 @@ export function findBestEnemyTarget(unit: RTSUnit, maxRadius = 6.5): RTSUnit | n
 }
 
 /**
+ * Alerta de Socorro para Soldados Aliados Próximos (Call for Help / Town Alarm):
+ * Aciona soldados aliados próximos ociosos (SWORDSMAN / ARCHER) para defender o alvo atacado.
+ */
+export function alertNearbyAlliedSoldiers(gridXOrPos: number | THREE.Vector3, gridZOrAttacker: number | RTSUnit, maybeAttackerOrRadius?: RTSUnit | number, maybeRadius?: number): void {
+  let attackPos: THREE.Vector3;
+  let attacker: RTSUnit;
+  let radius = 10.0;
+
+  if (typeof gridXOrPos === 'number') {
+    const gx = gridXOrPos;
+    const gz = gridZOrAttacker as number;
+    attacker = maybeAttackerOrRadius as RTSUnit;
+    if (typeof maybeRadius === 'number') radius = maybeRadius;
+    attackPos = new THREE.Vector3(gx + 0.5, 0, gz + 0.5);
+  } else {
+    attackPos = gridXOrPos;
+    attacker = gridZOrAttacker as RTSUnit;
+    if (typeof maybeAttackerOrRadius === 'number') radius = maybeAttackerOrRadius;
+  }
+
+  callAlliedSoldiersForHelp(attackPos, attacker, radius);
+}
+
+/**
+ * Reação Imediata ao Sofrer Dano:
+ * Aldeões interrompem trabalho civil, revidam contra o agressor e chamam reforços aliados.
+ * Soldados e arqueiros se defendem imediatamente e contra-atacam.
+ */
+export function onUnitDamagedByEnemy(victim: RTSUnit, attacker: RTSUnit): void {
+  if (victim.hp <= 0 || victim.isDying || !attacker || attacker.hp <= 0 || attacker.isDying) return;
+
+  const vPos = victim.group ? victim.group.position : new THREE.Vector3((victim.gridX ?? 0) + 0.5, 0, (victim.gridZ ?? 0) + 0.5);
+
+  // 1. SE A VÍTIMA FOR DA FACÇÃO DO JOGADOR (OU ALIADA)
+  if (victim.faction === 'PLAYER' || !victim.isEnemy) {
+    if (victim.unitType === 'VILLAGER') {
+      const isWorkingOrIdle = [
+        'GATHERING', 'MOVING_TO_RESOURCE',
+        'BUILDING', 'MOVING_TO_BUILD',
+        'FARMING', 'RETURNING_TO_BASE',
+        'IDLE', 'MINING_GOLD', 'DEPOSITING',
+        'MOVING_TO_REPAIR', 'REPAIRING',
+        'MOVING_TO_SCHOOL', 'MOVING_TO_COLLEGE', 'MOVING'
+      ].includes(victim.state);
+
+      if (isWorkingOrIdle) {
+        // Limpa poses de trabalho e ponteiros de trabalho civil
+        resetChopPose(victim);
+        clearUnitFarmTarget(victim);
+        victim.targetTree = null;
+        victim.targetBerryBush = null;
+        victim.targetStoneMine = null;
+        victim.targetGoldMine = null;
+        victim.targetBuilding = null;
+        (victim as any).targetResource = undefined;
+        victim.gatherCell = null;
+        victim.buildCell = null;
+        victim.dropoffTarget = null;
+        victim.dropoffBuilding = null;
+
+        // Entra em combate de auto-defesa contra o agressor
+        commandAttack(victim, attacker);
+
+        // Feedback sonoro e visual de alarme
+        soundManager.alertAttack?.();
+        spawnFloatingText(vPos.clone().add(new THREE.Vector3(0, 1.4, 0)), '⚠️ Sob Ataque!', '#ef4444');
+      }
+    } else if (victim.unitType === 'SWORDSMAN' || victim.unitType === 'ARCHER') {
+      const isAlreadyDuelingMelee =
+        victim.state === 'ATTACKING' &&
+        victim.targetEnemy &&
+        !victim.targetEnemy.isDying &&
+        victim.targetEnemy.hp > 0;
+
+      if (!isAlreadyDuelingMelee && (victim.state === 'IDLE' || victim.state === 'MOVING' || victim.state === 'ATTACKING_STRUCTURE')) {
+        commandAttack(victim, attacker);
+        spawnFloatingText(
+          vPos.clone().add(new THREE.Vector3(0, 1.4, 0)),
+          victim.unitType === 'ARCHER' ? '🏹 Contra-Atacar!' : '⚔️ Contra-Atacar!',
+          '#38bdf8'
+        );
+      }
+    }
+
+    // Alerta de socorro para guerreiros aliados nas proximidades
+    alertNearbyAlliedSoldiers(vPos, attacker, 10.0);
+  } else if (victim.faction === 'ENEMY') {
+    if (victim.state === 'IDLE' && !victim.targetEnemy) {
+      commandAttack(victim, attacker);
+    }
+  }
+}
+
+/**
  * Alerta de Socorro da Base (Call for Help / Town Watch):
  * Todos os soldados aliados que estiverem IDLE num raio de radius células recebem ordem para defender contra o invasor.
  */
@@ -14403,6 +14884,8 @@ export function updateAlliedCombatAggro(now: number): void {
   findBestEnemyTarget,
   commandAttack,
   callAlliedSoldiersForHelp,
+  alertNearbyAlliedSoldiers,
+  onUnitDamagedByEnemy,
   updateAlliedCombatAggro,
   archerProjectiles,
   trainArcher,
@@ -14980,9 +15463,10 @@ function updateHoverMarker(clientX: number, clientY: number) {
       ghostGridX = cell.gridX;
       ghostGridZ = cell.gridZ;
 
-      const sizeX = (currentPlacementType === 'TOWER' || currentPlacementType === 'HOUSE' || currentPlacementType === 'WALL') ? 1 : (currentPlacementType === 'COLLEGE' ? 3 : 2);
-      const sizeZ = (currentPlacementType === 'TOWER' || currentPlacementType === 'HOUSE' || currentPlacementType === 'WALL' || currentPlacementType === 'GATE') ? 1 : (currentPlacementType === 'COLLEGE' ? 3 : 2);
-      const valid = isPlacementValid(ghostGridX, ghostGridZ, sizeX, sizeZ);
+      const dims = getBuildingDimensions(currentPlacementType);
+      const sizeX = dims.width;
+      const sizeZ = dims.height;
+      const valid = isValidBuildingPlacement(ghostGridX, ghostGridZ, currentPlacementType);
       setGhostValidity(valid);
 
       // Oculta todos os fantasmas antes de posicionar o correto
@@ -15926,8 +16410,22 @@ function handleRightClick(clientX: number, clientY: number) {
     } else if (!building.isCompleted) {
       spawnMoveMarker(building.worldCenter.x, building.worldCenter.z, 0xf59e0b);
       if (selected.length > 0) {
-        console.log(`[RTS Construção] ${selected.length} aldeão(ões) enviados para construir a obra.`);
-        selected.forEach((u) => commandBuild(u, building));
+        const villagers = selected.filter((u) => u.unitType === 'VILLAGER');
+        const soldiers = selected.filter((u) => u.unitType !== 'VILLAGER');
+
+        if (villagers.length > 0) {
+          console.log(`[RTS Construção] ${villagers.length} aldeão(ões) enviados para construir a obra.`);
+          villagers.forEach((u) => commandBuild(u, building));
+        }
+
+        if (soldiers.length > 0) {
+          console.log(`[RTS Escolta] ${soldiers.length} combatente(s) escoltando a construção.`);
+          const buildingCell = new THREE.Vector2(building.gridX, building.gridZ);
+          soldiers.forEach((u) => {
+            const escortCell = findClosestWalkableCell(buildingCell, unitCell(u));
+            commandMove(u, escortCell);
+          });
+        }
         return;
       }
     } else {
@@ -16142,32 +16640,41 @@ window.addEventListener('pointerdown', (e) => {
         return;
       }
 
-      if (isGhostValid) {
-        if (currentPlacementType === 'GATE') {
-          placeGate(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'TOWER') {
-          placeTower(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'LUMBER_CAMP') {
-          placeLumberCamp(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'MINING_CAMP') {
-          placeMiningCamp(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'HOUSE') {
-          placeHouse(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'MILL') {
-          placeMill(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'FARM') {
-          placeFarm(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'SCHOOL') {
-          placeSchool(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'COLLEGE') {
-          placeCollege(ghostGridX, ghostGridZ, e.shiftKey);
-        } else if (currentPlacementType === 'ARCHERY_RANGE') {
-          placeArcheryRange(ghostGridX, ghostGridZ, e.shiftKey);
-        } else {
-          placeBarracks(ghostGridX, ghostGridZ, e.shiftKey);
-        }
+      // Revalida as coordenadas sob o cursor no momento exato do clique
+      const clickCell = raycastGridCell(e.clientX, e.clientY);
+      if (clickCell && clickCell.isInside) {
+        ghostGridX = clickCell.gridX;
+        ghostGridZ = clickCell.gridZ;
+      }
+
+      if (!isValidBuildingPlacement(ghostGridX, ghostGridZ, currentPlacementType)) {
+        soundManager.popCappedAlert();
+        spawnFloatingText(new THREE.Vector3(ghostGridX + 0.5, 2.0, ghostGridZ + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+        return;
+      }
+
+      if (currentPlacementType === 'GATE') {
+        placeGate(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'TOWER') {
+        placeTower(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'LUMBER_CAMP') {
+        placeLumberCamp(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'MINING_CAMP') {
+        placeMiningCamp(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'HOUSE') {
+        placeHouse(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'MILL') {
+        placeMill(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'FARM') {
+        placeFarm(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'SCHOOL') {
+        placeSchool(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'COLLEGE') {
+        placeCollege(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'ARCHERY_RANGE') {
+        placeArcheryRange(ghostGridX, ghostGridZ, e.shiftKey);
       } else {
-        console.log('[RTS Construção] Local bloqueado para construção!');
+        placeBarracks(ghostGridX, ghostGridZ, e.shiftKey);
       }
       return;
     }
@@ -16278,6 +16785,7 @@ window.addEventListener('pointerup', (e) => {
           }
         }
       }
+      updateUnitHUD();
     } else {
       selectionBoxEl.style.display = 'none';
       const clicked = findUnitUnderPointer(e.clientX, e.clientY);
@@ -16374,19 +16882,22 @@ function handleQuickTap(clientX: number, clientY: number): void {
       ghostGridX = cell.gridX;
       ghostGridZ = cell.gridZ;
       updateHoverMarker(clientX, clientY);
-      if (isGhostValid) {
-        if (currentPlacementType === 'GATE') placeGate(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'TOWER') placeTower(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'LUMBER_CAMP') placeLumberCamp(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'MINING_CAMP') placeMiningCamp(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'HOUSE') placeHouse(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'MILL') placeMill(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'FARM') placeFarm(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'SCHOOL') placeSchool(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'COLLEGE') placeCollege(ghostGridX, ghostGridZ, false);
-        else if (currentPlacementType === 'ARCHERY_RANGE') placeArcheryRange(ghostGridX, ghostGridZ, false);
-        else placeBarracks(ghostGridX, ghostGridZ, false);
+      if (!isValidBuildingPlacement(ghostGridX, ghostGridZ, currentPlacementType)) {
+        soundManager.popCappedAlert();
+        spawnFloatingText(new THREE.Vector3(ghostGridX + 0.5, 2.0, ghostGridZ + 0.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+        return;
       }
+      if (currentPlacementType === 'GATE') placeGate(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'TOWER') placeTower(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'LUMBER_CAMP') placeLumberCamp(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'MINING_CAMP') placeMiningCamp(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'HOUSE') placeHouse(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'MILL') placeMill(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'FARM') placeFarm(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'SCHOOL') placeSchool(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'COLLEGE') placeCollege(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'ARCHERY_RANGE') placeArcheryRange(ghostGridX, ghostGridZ, false);
+      else placeBarracks(ghostGridX, ghostGridZ, false);
     }
     return;
   }
@@ -16680,6 +17191,7 @@ window.addEventListener('touchend', (e: TouchEvent) => {
         soundManager.uiClick();
         if (navigator.vibrate) try { navigator.vibrate(20); } catch (_) {}
       }
+      updateUnitHUD();
     }
     return;
   }
@@ -16781,7 +17293,6 @@ export interface EnemyCampState {
 
 let enemyCampGroup: THREE.Group | null = null;
 export let enemyTownCenterState: TownCenterState | null = null;
-export let enemyCampState: any = null;
 
 /** Encontra um local válido e desobstruído para uma nova obra ao redor do Town Center Inimigo */
 function findFreeEnemyBuildingSite(
@@ -17778,18 +18289,13 @@ export function checkGameOverConditions() {
     return;
   }
 
-  // 2. Condição de Vitória: Destruir o Town Center Inimigo e eliminar as tropas/estruturas militares remanescentes
-  if (!currentMatchConfig.peacefulMode) {
+  // 2. Condição de Vitória: Destruir o Town Center Inimigo (Vitória Imediata)
+  if (!currentMatchConfig.peacefulMode && hasEnemyFaction) {
     const isEnemyTcDead = !enemyTownCenterState || enemyTownCenterState.isDestroyed || enemyTownCenterState.hp <= 0;
-    const aliveEnemyUnits = unitsList.filter((u) => u.faction === 'ENEMY' && !u.isDying);
-    const aliveEnemyMilitaryBuildings = buildingsList.filter(
-      (b) => b.faction === 'ENEMY' && b.type === 'BARRACKS' && !b.isDepleted && (b.hp === undefined || b.hp > 0)
-    );
-
-    if (isEnemyTcDead && aliveEnemyUnits.length === 0 && aliveEnemyMilitaryBuildings.length === 0) {
+    if (isEnemyTcDead) {
       triggerGameOver(
         'VICTORY',
-        'Você destruiu o Centro da Cidade Inimigo e eliminou todas as forças adversárias!'
+        'O Centro da Cidade Inimigo foi reduzido a cinzas! A vitória é do seu império!'
       );
       return;
     }
@@ -18245,7 +18751,50 @@ function createPeacefulChapters(): ColonyChapter[] {
         o('c4_tower', 'Construir 1 Torre de Vigia', 'BUILDING_COUNT', 'TOWER', 1),
         o('c4_gold', 'Acumular 400 de Ouro', 'RESOURCE_ACCUMULATED', 'GOLD', 400)
       ],
-      reward: { text: '🏆 Vitória Econômica!' }
+      reward: { wood: 200, stone: 150, text: '+200 Madeira, +150 Pedra' }
+    },
+    {
+      chapterIndex: 4, title: 'O Polo Industrial & Extração de Minério',
+      subtitle: 'A expansão da cidade exige reservas massivas de ouro e pedra para as grandes obras.',
+      objectives: [
+        o('c5_mines', 'Construir 2 Minas', 'BUILDING_COUNT', 'MINING_CAMP', 2),
+        o('c5_stone', 'Acumular 300 de Pedra', 'RESOURCE_ACCUMULATED', 'STONE', 300),
+        o('c5_farms', 'Construir 4 Fazendas', 'BUILDING_COUNT', 'FARM', 4),
+        o('c5_villagers', 'Atingir 20 Aldeões', 'UNIT_COUNT', 'VILLAGER', 20)
+      ],
+      reward: { gold: 200, stone: 150, text: '+200 Ouro, +150 Pedra' }
+    },
+    {
+      chapterIndex: 5, title: 'O Bastião de Ferro & Mestre Armeiro',
+      subtitle: 'Proteja suas rotas comerciais contra os perigos da selva com armamentos avançados.',
+      objectives: [
+        o('c6_armorer', 'Formar 1 Armeiro na Faculdade', 'SPECIALIZATION_COUNT', 'ARMORER', 1),
+        o('c6_archery', 'Construir o Campo de Tiro com Arco', 'BUILDING_COUNT', 'ARCHERY_RANGE', 1),
+        o('c6_archers', 'Treinar 5 Arqueiros de guarda', 'UNIT_COUNT', 'ARCHER', 5),
+        o('c6_towers', 'Erguer 2 Torres de Vigia fortificadas', 'BUILDING_COUNT', 'TOWER', 2)
+      ],
+      reward: { food: 200, gold: 100, text: '+200 Alimento, +100 Ouro' }
+    },
+    {
+      chapterIndex: 6, title: 'A Rede de Abastecimento & Moinhos Regionais',
+      subtitle: 'Uma metrópole não pode depender de um único celeiro. Decentralize a agricultura.',
+      objectives: [
+        o('c7_mills', 'Construir 3 Moinhos espalhados', 'BUILDING_COUNT', 'MILL', 3),
+        o('c7_farms', 'Construir 8 Fazendas produtivas', 'BUILDING_COUNT', 'FARM', 8),
+        o('c7_food', 'Acumular 1.000 de Alimento no tesouro', 'RESOURCE_ACCUMULATED', 'FOOD', 1000)
+      ],
+      reward: { wood: 300, gold: 200, text: '+300 Madeira, +200 Ouro' }
+    },
+    {
+      chapterIndex: 7, title: 'A Capital da Sabedoria e Soberania Global',
+      subtitle: 'Coroe os séculos de trabalho duro transformando sua colônia no farol da civilização.',
+      objectives: [
+        o('c8_alchemist', 'Formar 1 Alquimista na Faculdade', 'SPECIALIZATION_COUNT', 'ALCHEMIST', 1),
+        o('c8_walls', 'Erguer 30 Muralhas e Portões de Pedra', 'BUILDING_WALLS_GATES', 'WALL_OR_GATE', 30),
+        o('c8_pop', 'Atingir população de 40 habitantes', 'POPULATION_TOTAL', 'TOTAL', 40),
+        o('c8_gold', 'Acumular 1.000 de Ouro no tesouro', 'RESOURCE_ACCUMULATED', 'GOLD', 1000)
+      ],
+      reward: { text: '🏆 Vitória Épica de Supremacia Pacífica!' }
     }
   ];
 }
@@ -18253,7 +18802,7 @@ function createPeacefulChapters(): ColonyChapter[] {
 let peacefulChapters: ColonyChapter[] = createPeacefulChapters();
 let currentChapterIndex = 0;
 let lastQuestCheckTime = 0;
-const ROMAN_NUMERALS = ['I', 'II', 'III', 'IV', 'V'];
+const ROMAN_NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
 
 function playQuestTone(notes: number[], step: number, dur: number, vol: number): void {
   const ctx = soundManager.ensureAudioContext();
@@ -18320,7 +18869,7 @@ function completeChapter(chapter: ColonyChapter): void {
   if (chapter.chapterIndex >= peacefulChapters.length - 1) {
     triggerGameOver('VICTORY', 'Sua colônia se tornou a mais próspera e admirada de todo o reino!');
     const titleEl = document.getElementById('game-over-title');
-    if (titleEl) titleEl.textContent = '🏆 MESTRE CONSTRUTOR DA COLÔNIA!';
+    if (titleEl) titleEl.textContent = '🏆 IMPERADOR DA PAZ E DA PROSPERIDADE!';
     return;
   }
   const tracker = document.getElementById('peaceful-quest-tracker');
@@ -18346,17 +18895,26 @@ export function updatePeacefulQuests(): void {
       case 'BUILDING_COUNT':
         count = buildingsList.filter(b => b.type === obj.targetType && b.faction === 'PLAYER' && b.isCompleted && (b.hp === undefined || b.hp > 0)).length;
         break;
+      case 'BUILDING_WALLS_GATES':
+        count = buildingsList.filter(b => (b.type === 'WALL' || b.type === 'GATE') && b.faction === 'PLAYER' && b.isCompleted && (b.hp === undefined || b.hp > 0)).length;
+        break;
       case 'UNIT_COUNT':
         count = myUnits.filter(u => u.unitType === obj.targetType).length;
+        break;
+      case 'POPULATION_TOTAL':
+        count = myUnits.length;
         break;
       case 'EDUCATION_COUNT':
         count = myUnits.filter(u => u.educationLevel >= 1).length;
         break;
       case 'SPECIALIZATION_COUNT':
-        count = myUnits.filter(u => u.eliteSpecialization === obj.targetType).length;
+        count = myUnits.filter(u => u.eliteSpecialization === obj.targetType || u.specialization === obj.targetType).length;
         break;
       case 'RESOURCE_ACCUMULATED':
         if (obj.targetType === 'GOLD') count = Math.floor(resources.gold);
+        else if (obj.targetType === 'STONE') count = Math.floor(resources.stone);
+        else if (obj.targetType === 'FOOD') count = Math.floor(resources.food);
+        else if (obj.targetType === 'WOOD') count = Math.floor(resources.wood);
         break;
     }
     obj.currentCount = Math.min(obj.targetCount, count);
@@ -20494,11 +21052,8 @@ function animate() {
 
             spawnFloatingText(currentTargetPos.clone().setY(1.3), `-${dmg}`, '#ef4444');
 
-            if (u.faction === 'PLAYER') {
-              callAlliedSoldiersForHelp(u.group.position, proj.attacker, 8.0);
-            }
-            if (u.state === 'IDLE' && !u.isDying && proj.attacker && !proj.attacker.isDying) {
-              commandAttack(u, proj.attacker);
+            if (proj.attacker) {
+              onUnitDamagedByEnemy(u, proj.attacker);
             }
 
             if (u.hp <= 0 && !u.isDying) {
@@ -20628,7 +21183,7 @@ function animate() {
     }
   }
 
-  if (unitCardPanelEl && unitCardPanelEl.style.display !== 'none') {
+  if ((unitCardPanelEl && unitCardPanelEl.style.display !== 'none') || (multiSelectionPanelEl && !multiSelectionPanelEl.classList.contains('hidden'))) {
     updateUnitHUD();
   }
 

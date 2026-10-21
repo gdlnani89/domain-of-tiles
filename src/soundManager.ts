@@ -940,6 +940,30 @@ class SoundManager {
   public playPopCappedAlert(): void {
     this.popCappedAlert();
   }
+
+  public playSelectionClick(): void {
+    const ctx = this.ensureAudioContext();
+    if (!ctx || this.isMuted) return;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.exponentialRampToValueAtTime(880.0, now + 0.05); // A5
+
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.12 * this.masterVolume, now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain || ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } catch (_) {}
+  }
 }
 
 export const soundManager = new SoundManager();
