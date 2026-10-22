@@ -5315,12 +5315,42 @@ function updateFarmVisuals(farm: ConstructionBuilding) {
 function depleteFarm(farm: ConstructionBuilding) {
   farm.isDepleted = true;
   farm.farmFood = 0;
-  updateFarmVisuals(farm);
-  spawnFloatingText(farm.worldCenter.clone().setY(1.4), '🌾 Fazenda Esgotada! [Re-seed 60 🪵]', '#f59e0b');
-  console.log(`[RTS Fazenda] Fazenda em (${farm.gridX}, ${farm.gridZ}) esgotou sua safra.`);
-  if (selectedBuilding === farm) {
-    updateFarmHUD();
+  farm.assignedFarmerId = null;
+
+  // 1. Free the 2x2 grid cells and remove from buildingsGridMap
+  const sX = farm.sizeX || farm.size || 2;
+  const sZ = farm.sizeZ || farm.size || 2;
+  for (let dx = 0; dx < sX; dx++) {
+    for (let dz = 0; dz < sZ; dz++) {
+      const cx = farm.gridX + dx;
+      const cz = farm.gridZ + dz;
+      setCellWalkable(cx, cz, true);
+      if (buildingsGridMap.get(cellKey(cx, cz)) === farm) {
+        buildingsGridMap.delete(cellKey(cx, cz));
+      }
+    }
   }
+
+  // 2. If this farm was currently selected, deselect it
+  if (selectedBuilding === farm) {
+    deselectBuilding();
+  }
+
+  // 3. Remove the farm mesh from the 3D scene and from buildingsList
+  if (farm.group && farm.group.parent) {
+    scene.remove(farm.group);
+  }
+  const idx = buildingsList.indexOf(farm);
+  if (idx !== -1) {
+    buildingsList.splice(idx, 1);
+  }
+
+  spawnFloatingText(
+    farm.worldCenter.clone().setY(1.4),
+    '🌾 Fazenda Esgotada! Terreno livre para novo plantio.',
+    '#f59e0b'
+  );
+  console.log(`[RTS Farm] Farm at (${farm.gridX}, ${farm.gridZ}) depleted and land cleared.`);
 }
 
 function reseedFarm(farm: ConstructionBuilding) {
@@ -7626,7 +7656,7 @@ export function isCellOccupiedByBuilding(gridX: number, gridZ: number): boolean 
 
   // 3. Mapeamento direto em buildingsGridMap (O(1))
   const mapped = buildingsGridMap.get(cellKey(gx, gz));
-  if (mapped && (mapped.hp === undefined || mapped.hp > 0) && mapped.group?.parent !== null) {
+  if (mapped && !mapped.isDepleted && (mapped.hp === undefined || mapped.hp > 0) && mapped.group?.parent !== null) {
     return true;
   }
 
@@ -7637,6 +7667,7 @@ export function isCellOccupiedByBuilding(gridX: number, gridZ: number): boolean 
 
   // 5. Varredura completa em buildingsList (prontos e em obras, aliados e inimigos)
   for (const b of buildingsList) {
+    if (b.isDepleted) continue;
     if (b.hp !== undefined && b.hp <= 0) continue;
     if (b.group && b.group.parent === null) continue;
 
@@ -7706,7 +7737,17 @@ export function isValidBuildingPlacement(targetX: number, targetZ: number, build
 
       // d) Verifica se há unidade viva ocupando a célula
       if (isCellOccupiedByUnit(cx, cz)) {
-        return false;
+        if (buildingType === 'FARM') {
+          // Permite que o agricultor/aldeão que acabou de colher esteja sobre o ladrilho
+          const onlyFriendlyVillager = unitsList
+            .filter((u) => Math.floor(u.group.position.x) === cx && Math.floor(u.group.position.z) === cz && !u.isDying && u.hp > 0)
+            .every((u) => u.faction === 'PLAYER' && u.unitType === 'VILLAGER');
+          if (!onlyFriendlyVillager) {
+            return false;
+          }
+        } else {
+          return false;
+        }
       }
     }
   }
@@ -8638,6 +8679,18 @@ function placeFarm(gx: number, gz: number, shiftKey: boolean = false) {
 
   const building = createFarmFoundation(gx, gz);
   console.log(`[RTS Construção] Canteiro da Fazenda posicionado em (${gx}, ${gz}). Progresso: 0%`);
+
+  // Move aldeões que estiverem sobre os blocos da fazenda para uma célula adjacente livre
+  for (const u of unitsList) {
+    if (u.faction === 'PLAYER' && !u.isDying && u.hp > 0) {
+      const ux = Math.floor(u.group.position.x);
+      const uz = Math.floor(u.group.position.z);
+      if (ux >= gx && ux < gx + 2 && uz >= gz && uz < gz + 2) {
+        const perimeterCell = findClosestWalkableCell(new THREE.Vector2(gx + 1, gz + 1), unitCell(u));
+        commandMove(u, perimeterCell);
+      }
+    }
+  }
 
   const selected = getSelectedUnits().filter((u) => u.unitType === 'VILLAGER');
   if (selected.length > 0) {
