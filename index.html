@@ -388,6 +388,13 @@
               <span class="build-cost"><span class="cost-wood">150 🪵</span> + <span class="cost-stone">120 🪨</span> + <span class="cost-gold">80 🪙</span> • [C]</span>
             </div>
           </button>
+          <button id="btn-build-market" class="btn-build disabled" data-category="civil" title="Construir Mercado (Atalho K) — Requer 150 Madeira + 50 Pedra (Troca de Recursos)">
+            <span class="build-icon">⚖️</span>
+            <div class="build-info">
+              <span class="build-name">Mercado</span>
+              <span class="build-cost"><span class="cost-wood">150 🪵</span> + <span class="cost-stone">50 🪨</span> • [K]</span>
+            </div>
+          </button>
           <button id="btn-build-wall" class="btn-build btn-locked disabled" data-category="military" title="Requer um Arquiteto vivo formado na Faculdade!">
             <span class="build-icon">🧱</span>
             <div class="build-info">
@@ -934,6 +941,131 @@
           </div>
           <button type="button" class="btn-clear-rally" id="btn-clear-college-rally" title="Remover ponto de encontro e voltar a nascer na porta" style="display: none;">
             ✕ Limpar Ponto
+          </button>
+        </div>
+      </div>
+
+      <!-- Market Trading Panel (Active when Market is selected) -->
+      <div class="ui-overlay market-panel" id="market-hud-panel" style="display: none;">
+        <div class="market-panel-header">
+          <div class="market-title-wrap">
+            <span class="market-badge">COMÉRCIO & ECONOMIA</span>
+            <span class="market-title">⚖️ Mercado Feudal</span>
+          </div>
+          <button id="btn-close-market" class="btn-close-panel" title="Fechar painel (Esc)">✕</button>
+        </div>
+
+        <div class="market-gold-summary">
+          <span class="market-gold-label">Tesouro em Ouro:</span>
+          <span class="market-gold-val" id="market-current-gold">🪙 0</span>
+        </div>
+
+        <div class="market-info-banner">
+          <span>💡 Lote de <strong>100 un.</strong> (Shift+Clique: <strong>500 un.</strong>). Preços variam com a oferta e demanda.</span>
+        </div>
+
+        <div class="market-trades-table">
+          <!-- Linha Madeira -->
+          <div class="market-trade-row" data-resource="WOOD">
+            <div class="resource-col">
+              <span class="res-icon">🪵</span>
+              <div class="res-meta">
+                <span class="res-name">Madeira</span>
+                <span class="res-stock" id="market-stock-wood">0 em estoque</span>
+              </div>
+            </div>
+            <div class="rates-col">
+              <div class="rate-box sell-rate" title="Preço recebido ao vender 100 unidades">
+                <span class="rate-label">Venda (100)</span>
+                <span class="rate-val" id="market-sell-price-wood">🪙 30</span>
+              </div>
+              <div class="rate-box buy-rate" title="Preço pago para comprar 100 unidades">
+                <span class="rate-label">Compra (100)</span>
+                <span class="rate-val" id="market-buy-price-wood">🪙 50</span>
+              </div>
+              <span class="trend-indicator" id="market-trend-wood" title="Tendência de preço">●</span>
+            </div>
+            <div class="actions-col">
+              <button type="button" class="btn-market-trade btn-market-sell" id="btn-market-sell-wood" title="Vender 100 Madeira (Shift: 500)">
+                <span>Vender</span>
+              </button>
+              <button type="button" class="btn-market-trade btn-market-buy" id="btn-market-buy-wood" title="Comprar 100 Madeira (Shift: 500)">
+                <span>Comprar</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Linha Comida -->
+          <div class="market-trade-row" data-resource="FOOD">
+            <div class="resource-col">
+              <span class="res-icon">🍖</span>
+              <div class="res-meta">
+                <span class="res-name">Comida</span>
+                <span class="res-stock" id="market-stock-food">0 em estoque</span>
+              </div>
+            </div>
+            <div class="rates-col">
+              <div class="rate-box sell-rate" title="Preço recebido ao vender 100 unidades">
+                <span class="rate-label">Venda (100)</span>
+                <span class="rate-val" id="market-sell-price-food">🪙 30</span>
+              </div>
+              <div class="rate-box buy-rate" title="Preço pago para comprar 100 unidades">
+                <span class="rate-label">Compra (100)</span>
+                <span class="rate-val" id="market-buy-price-food">🪙 50</span>
+              </div>
+              <span class="trend-indicator" id="market-trend-food" title="Tendência de preço">●</span>
+            </div>
+            <div class="actions-col">
+              <button type="button" class="btn-market-trade btn-market-sell" id="btn-market-sell-food" title="Vender 100 Comida (Shift: 500)">
+                <span>Vender</span>
+              </button>
+              <button type="button" class="btn-market-trade btn-market-buy" id="btn-market-buy-food" title="Comprar 100 Comida (Shift: 500)">
+                <span>Comprar</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Linha Pedra -->
+          <div class="market-trade-row" data-resource="STONE">
+            <div class="resource-col">
+              <span class="res-icon">🪨</span>
+              <div class="res-meta">
+                <span class="res-name">Pedra</span>
+                <span class="res-stock" id="market-stock-stone">0 em estoque</span>
+              </div>
+            </div>
+            <div class="rates-col">
+              <div class="rate-box sell-rate" title="Preço recebido ao vender 100 unidades">
+                <span class="rate-label">Venda (100)</span>
+                <span class="rate-val" id="market-sell-price-stone">🪙 45</span>
+              </div>
+              <div class="rate-box buy-rate" title="Preço pago para comprar 100 unidades">
+                <span class="rate-label">Compra (100)</span>
+                <span class="rate-val" id="market-buy-price-stone">🪙 75</span>
+              </div>
+              <span class="trend-indicator" id="market-trend-stone" title="Tendência de preço">●</span>
+            </div>
+            <div class="actions-col">
+              <button type="button" class="btn-market-trade btn-market-sell" id="btn-market-sell-stone" title="Vender 100 Pedra (Shift: 500)">
+                <span>Vender</span>
+              </button>
+              <button type="button" class="btn-market-trade btn-market-buy" id="btn-market-buy-stone" title="Comprar 100 Pedra (Shift: 500)">
+                <span>Comprar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="building-hp-box" id="market-hp-box" style="display: none;">
+          <div class="building-hp-row">
+            <span class="hp-label">Integridade da Estrutura:</span>
+            <span class="hp-val" id="market-hp-val">400 / 400 HP</span>
+          </div>
+          <div class="building-hp-track">
+            <div class="building-hp-fill" id="market-hp-fill" style="width: 100%;"></div>
+          </div>
+          <button class="btn-repair btn-repair-action" title="Despacha um aldeão ocioso próximo para reparar a estrutura">
+            <span>🔧</span> Reparar Estrutura
           </button>
         </div>
       </div>

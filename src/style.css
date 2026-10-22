@@ -2308,6 +2308,248 @@ canvas {
 }
 
 /* ==========================================================================
+   Market Trading Panel (.market-panel)
+   ========================================================================== */
+.market-panel {
+  bottom: 104px;
+  left: 16px;
+  width: 360px;
+  background: linear-gradient(135deg, rgba(20, 24, 38, 0.97), rgba(30, 36, 56, 0.95));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(234, 179, 8, 0.55);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.65), 0 0 24px rgba(234, 179, 8, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  animation: slideUpFade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 25;
+}
+
+.market-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
+  padding-bottom: 8px;
+}
+
+.market-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.market-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #facc15;
+  font-family: var(--font-mono);
+}
+
+.market-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fef08a;
+}
+
+.market-gold-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
+.market-gold-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.market-gold-val {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 14px;
+  color: #fde047;
+  text-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+}
+
+.market-info-banner {
+  font-size: 10px;
+  color: #94a3b8;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 2px solid #eab308;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1.35;
+}
+
+.market-trades-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.market-trade-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.market-trade-row:hover {
+  border-color: rgba(234, 179, 8, 0.3);
+  background: rgba(20, 30, 50, 0.75);
+}
+
+.market-trade-row .resource-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 95px;
+}
+
+.market-trade-row .res-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.market-trade-row .res-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.market-trade-row .res-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.market-trade-row .res-stock {
+  font-size: 9px;
+  color: #94a3b8;
+  font-family: var(--font-mono);
+}
+
+.market-trade-row .rates-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.market-trade-row .rate-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 52px;
+}
+
+.market-trade-row .rate-label {
+  font-size: 8px;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.market-trade-row .rate-val {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.market-trade-row .sell-rate .rate-val {
+  color: #4ade80;
+}
+
+.market-trade-row .buy-rate .rate-val {
+  color: #f87171;
+}
+
+.trend-indicator {
+  font-size: 11px;
+  font-weight: 800;
+  width: 14px;
+  text-align: center;
+}
+
+.trend-up {
+  color: #ef4444; /* preço alto (caro) */
+}
+
+.trend-down {
+  color: #22c55e; /* preço baixo (barato) */
+}
+
+.trend-neutral {
+  color: #94a3b8;
+}
+
+.market-trade-row .actions-col {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-market-trade {
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  outline: none;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-market-sell {
+  background: linear-gradient(135deg, rgba(22, 101, 52, 0.8), rgba(21, 128, 61, 0.7));
+  border-color: rgba(74, 222, 128, 0.4);
+  color: #dcfce7;
+}
+
+.btn-market-sell:hover:not(.disabled) {
+  background: linear-gradient(135deg, rgba(21, 128, 61, 0.95), rgba(34, 197, 94, 0.85));
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-market-buy {
+  background: linear-gradient(135deg, rgba(153, 27, 27, 0.8), rgba(185, 28, 28, 0.7));
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fee2e2;
+}
+
+.btn-market-buy:hover:not(.disabled) {
+  background: linear-gradient(135deg, rgba(185, 28, 28, 0.95), rgba(220, 38, 38, 0.85));
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-market-trade.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: grayscale(0.7);
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* ==========================================================================
    Selected Unit HUD Card (#unit-card-panel)
    ========================================================================== */
 .unit-card-panel {

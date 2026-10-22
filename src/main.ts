@@ -1,6 +1,15 @@
 import './style.css';
 import * as THREE from 'three';
 import { soundManager } from './soundManager';
+import {
+  MARKET_CONFIG,
+  createInitialMarketPriceState,
+  getTradeRates,
+  executeTrade,
+  tickMarketPrices,
+  type MarketPriceState,
+  type TradableResource
+} from './market';
 
 /**
  * ============================================================================
@@ -2541,12 +2550,12 @@ export interface EnrolledStudent {
 
 export interface ConstructionBuilding {
   id: string;
-  type: 'BARRACKS' | 'TOWER' | 'LUMBER_CAMP' | 'MINING_CAMP' | 'HOUSE' | 'MILL' | 'FARM' | 'SCHOOL' | 'COLLEGE' | 'WALL' | 'GATE' | 'ARCHERY_RANGE';
+  type: 'BARRACKS' | 'TOWER' | 'LUMBER_CAMP' | 'MINING_CAMP' | 'HOUSE' | 'MILL' | 'FARM' | 'SCHOOL' | 'COLLEGE' | 'MARKET' | 'WALL' | 'GATE' | 'ARCHERY_RANGE';
   faction: UnitFaction;
   isEnemy: boolean;
   gridX: number; // célula superior-esquerda X
   gridZ: number; // célula superior-esquerda Z
-  size: number;  // 3x3 para Faculdade/TC, 2x2 para Quartel/Madeireira/Mina/Moinho/Fazenda/Escola/Portão, 1x1 para Torre/Casa/Muralha
+  size: number;  // 3x3 para Faculdade/TC/Mercado, 2x2 para Quartel/Madeireira/Mina/Moinho/Fazenda/Escola/Portão, 1x1 para Torre/Casa/Muralha
   sizeX?: number;
   sizeZ?: number;
   worldCenter: THREE.Vector3;
@@ -2620,6 +2629,14 @@ const COLLEGE_COST_WOOD = 150;
 const COLLEGE_COST_STONE = 120;
 const COLLEGE_COST_GOLD = 80;
 const COLLEGE_MAX_STUDENTS = 3;
+
+// Constantes do Mercado Feudal (MARKET 3x3 - v1.3.0)
+const MARKET_COST_WOOD = MARKET_CONFIG.COST_WOOD;
+const MARKET_COST_STONE = MARKET_CONFIG.COST_STONE;
+const MARKET_HP = MARKET_CONFIG.HP;
+
+/** Estado global de preços do mercado comercial do jogador */
+export let playerMarketState: MarketPriceState = createInitialMarketPriceState();
 
 // Constantes de Fortificação (Muralhas e Portões)
 const WALL_COST_STONE = 5;
@@ -6050,6 +6067,285 @@ function createCollegeFoundation(gridX: number, gridZ: number, faction: UnitFact
   return building;
 }
 
+// --- SISTEMA DO MERCADO FEUDAL (MARKET 3x3 - v1.3.0) ---
+function createMarketModel(): {
+  siteGroup: THREE.Group;
+  finishedGroup: THREE.Group;
+  progressGroup: THREE.Group;
+  progressBarMesh: THREE.Mesh;
+  selectionMesh: THREE.Mesh;
+} {
+  const siteGroup = new THREE.Group();
+
+  // 1. Canteiro de Obras 3x3: Saia de fundação + estacas e caixas de suprimentos
+  const siteSkirt = new THREE.Mesh(
+    new THREE.BoxGeometry(2.7, 0.8, 2.7),
+    new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.95 })
+  );
+  siteSkirt.position.y = -0.4;
+  siteSkirt.receiveShadow = true;
+  siteGroup.add(siteSkirt);
+
+  const siteGround = new THREE.Mesh(
+    new THREE.BoxGeometry(2.65, 0.12, 2.65),
+    new THREE.MeshStandardMaterial({ color: 0x6d4c41, roughness: 0.9 })
+  );
+  siteGround.position.y = 0.06;
+  siteGroup.add(siteGround);
+
+  // Caixotes e fardos no canteiro
+  const crateMat = new THREE.MeshStandardMaterial({ color: 0x8d6e63, roughness: 0.8 });
+  const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), crateMat);
+  c1.position.set(-0.7, 0.22, 0.7);
+  siteGroup.add(c1);
+
+  const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), crateMat);
+  c2.position.set(-0.4, 0.2, 0.8);
+  siteGroup.add(c2);
+
+  // Postes de andaime do canteiro
+  const postGeo = new THREE.CylinderGeometry(0.04, 0.04, 1.3, 6);
+  const woodScaffoldMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.85 });
+  const scaffoldOffsets = [
+    [-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1],
+    [0, -1.15], [0, 1.15]
+  ];
+  scaffoldOffsets.forEach(([px, pz]) => {
+    const post = new THREE.Mesh(postGeo, woodScaffoldMat);
+    post.position.set(px, 0.65, pz);
+    siteGroup.add(post);
+  });
+
+  // 2. Modelo Finalizado do Mercado Feudal (Praça de comércio 3x3 com barracas, toldos, balança e caixotes)
+  const finishedGroup = new THREE.Group();
+
+  // Saia de ancoragem de terreno
+  const skirtMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(2.7, 1.2, 2.7),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.95 })
+  );
+  skirtMesh.position.y = -0.6;
+  finishedGroup.add(skirtMesh);
+
+  // Praça calçada em pedra (plinto)
+  const plazaMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.85 });
+  const plazaFloor = new THREE.Mesh(new THREE.BoxGeometry(2.65, 0.16, 2.65), plazaMat);
+  plazaFloor.position.y = 0.08;
+  plazaFloor.receiveShadow = true;
+  finishedGroup.add(plazaFloor);
+
+  // Mureta baixa de pedra nos cantos
+  const curbMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.9 });
+  const curb1 = new THREE.Mesh(new THREE.BoxGeometry(2.65, 0.1, 0.14), curbMat);
+  curb1.position.set(0, 0.18, -1.25);
+  finishedGroup.add(curb1);
+
+  // Barraca 1 (Norte / Esquerda): Toldo Listrado Vermelho e Branco
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 });
+  const stall1Counter = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.45, 0.5), woodMat);
+  stall1Counter.position.set(-0.65, 0.35, -0.65);
+  stall1Counter.castShadow = true;
+  finishedGroup.add(stall1Counter);
+
+  // 4 Pilares da Barraca 1
+  const poleGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.1, 8);
+  const stall1Poles = [
+    [-1.05, -0.85], [-0.25, -0.85],
+    [-1.05, -0.45], [-0.25, -0.45]
+  ];
+  stall1Poles.forEach(([px, pz]) => {
+    const pole = new THREE.Mesh(poleGeo, woodMat);
+    pole.position.set(px, 0.7, pz);
+    pole.castShadow = true;
+    finishedGroup.add(pole);
+  });
+
+  // Toldo da Barraca 1 (Vermelho Mercante)
+  const awning1Mat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.65 });
+  const awning1 = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.65), awning1Mat);
+  awning1.rotation.x = -0.15;
+  awning1.position.set(-0.65, 1.3, -0.65);
+  awning1.castShadow = true;
+  finishedGroup.add(awning1);
+
+  // Barraca 2 (Norte / Direita): Toldo Verde Musgo Mercante
+  const stall2Counter = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.45, 0.5), woodMat);
+  stall2Counter.position.set(0.65, 0.35, -0.65);
+  stall2Counter.castShadow = true;
+  finishedGroup.add(stall2Counter);
+
+  const stall2Poles = [
+    [0.25, -0.85], [1.05, -0.85],
+    [0.25, -0.45], [1.05, -0.45]
+  ];
+  stall2Poles.forEach(([px, pz]) => {
+    const pole = new THREE.Mesh(poleGeo, woodMat);
+    pole.position.set(px, 0.7, pz);
+    pole.castShadow = true;
+    finishedGroup.add(pole);
+  });
+
+  const awning2Mat = new THREE.MeshStandardMaterial({ color: 0x059669, roughness: 0.65 });
+  const awning2 = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 0.65), awning2Mat);
+  awning2.rotation.x = -0.15;
+  awning2.position.set(0.65, 1.3, -0.65);
+  awning2.castShadow = true;
+  finishedGroup.add(awning2);
+
+  // Barraca 3 (Sul / Tenda de Câmbio Principal com Balança)
+  const exchangeCounter = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.5, 0.6), woodMat);
+  exchangeCounter.position.set(0, 0.38, 0.5);
+  exchangeCounter.castShadow = true;
+  finishedGroup.add(exchangeCounter);
+
+  // Toldo Azul Imperial do Câmbio
+  const awning3Mat = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.6 });
+  const awning3 = new THREE.Mesh(new THREE.ConeGeometry(0.85, 0.5, 4), awning3Mat);
+  awning3.rotation.y = Math.PI / 4;
+  awning3.position.set(0, 1.45, 0.5);
+  awning3.castShadow = true;
+  finishedGroup.add(awning3);
+
+  // Balança Dourada Central
+  const brassMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.85, roughness: 0.25 });
+  const scalePost = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.45, 8), brassMat);
+  scalePost.position.set(0, 0.85, 0.5);
+  finishedGroup.add(scalePost);
+
+  const scaleBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.35, 8), brassMat);
+  scaleBeam.rotation.z = Math.PI / 2;
+  scaleBeam.position.set(0, 1.05, 0.5);
+  finishedGroup.add(scaleBeam);
+
+  const scalePan1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.03, 10), brassMat);
+  scalePan1.position.set(-0.16, 0.95, 0.5);
+  finishedGroup.add(scalePan1);
+
+  const scalePan2 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.03, 0.03, 10), brassMat);
+  scalePan2.position.set(0.16, 0.95, 0.5);
+  finishedGroup.add(scalePan2);
+
+  // Barris de mercadorias no pátio
+  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.7 });
+  const bGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.35, 10);
+  const barrel1 = new THREE.Mesh(bGeo, barrelMat);
+  barrel1.position.set(-0.85, 0.32, 0.25);
+  finishedGroup.add(barrel1);
+
+  const barrel2 = new THREE.Mesh(bGeo, barrelMat);
+  barrel2.position.set(0.85, 0.32, 0.25);
+  finishedGroup.add(barrel2);
+
+  // Pilha de caixotes de maçãs / peixes / pedras
+  const foodCrateMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.6 });
+  const crateItems = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.24), foodCrateMat);
+  crateItems.position.set(-0.65, 0.62, -0.65);
+  finishedGroup.add(crateItems);
+
+  finishedGroup.visible = false;
+
+  // 3. Barra de Progresso 3D da Construção
+  const progressGroup = new THREE.Group();
+  const trackGeo = new THREE.BoxGeometry(1.6, 0.12, 0.08);
+  const trackMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+  const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+  progressGroup.add(trackMesh);
+
+  const barGeo = new THREE.BoxGeometry(1.56, 0.09, 0.09);
+  const barMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+  const progressBarMesh = new THREE.Mesh(barGeo, barMat);
+  progressBarMesh.position.x = -0.78;
+  progressGroup.add(progressBarMesh);
+
+  progressGroup.position.set(0, 2.6, 0);
+
+  // 4. Anel de Seleção 3x3 no Chão
+  const selectionGeo = new THREE.RingGeometry(1.95, 2.18, 32);
+  const selectionMat = new THREE.MeshBasicMaterial({
+    color: 0xf59e0b,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.95
+  });
+  const selectionMesh = new THREE.Mesh(selectionGeo, selectionMat);
+  selectionMesh.rotation.x = -Math.PI / 2;
+  selectionMesh.position.y = 0.02;
+  selectionMesh.visible = false;
+
+  return { siteGroup, finishedGroup, progressGroup, progressBarMesh, selectionMesh };
+}
+
+function createMarketFoundation(gridX: number, gridZ: number, faction: UnitFaction = 'PLAYER'): ConstructionBuilding {
+  const elevation = getBuildingPlacementHeight(gridX, gridZ, 3);
+  const worldCenter = new THREE.Vector3(gridX + 1.5, elevation, gridZ + 1.5);
+  const group = new THREE.Group();
+  group.position.copy(worldCenter);
+
+  const {
+    siteGroup,
+    finishedGroup,
+    progressGroup,
+    progressBarMesh,
+    selectionMesh
+  } = createMarketModel();
+
+  group.add(selectionMesh);
+  group.add(siteGroup);
+  group.add(progressGroup);
+  group.add(finishedGroup);
+
+  if (faction === 'ENEMY') {
+    const isDiscovered = currentMatchConfig.revealWholeMap || isBuildingDiscovered({ gridX, gridZ, size: 3 });
+    group.visible = isDiscovered;
+    group.traverse((c: any) => { if (c.isMesh) c.castShadow = isDiscovered; });
+  }
+
+  scene.add(group);
+
+  // Bloqueia 9 células (3x3) no grid
+  for (let dx = 0; dx < 3; dx++) {
+    for (let dz = 0; dz < 3; dz++) {
+      setCellWalkable(gridX + dx, gridZ + dz, false);
+    }
+  }
+
+  const building: ConstructionBuilding = {
+    id: `market_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    type: 'MARKET',
+    faction,
+    isEnemy: faction === 'ENEMY',
+    gridX,
+    gridZ,
+    size: 3,
+    worldCenter,
+    isCompleted: false,
+    progress: 0,
+    group,
+    mesh: group,
+    siteGroup,
+    finishedGroup,
+    progressBarMesh,
+    progressGroup,
+    trainingQueue: [],
+    trainingTimer: 0,
+    selectionMesh,
+    trainingProgressGroup: new THREE.Group(),
+    trainingProgressBarMesh: new THREE.Mesh(),
+    lastAttackTime: 0,
+    hp: MARKET_HP,
+    maxHp: MARKET_HP
+  };
+
+  buildingsList.push(building);
+  for (let dx = 0; dx < 3; dx++) {
+    for (let dz = 0; dz < 3; dz++) {
+      buildingsGridMap.set(cellKey(gridX + dx, gridZ + dz), building);
+    }
+  }
+
+  return building;
+}
+
 // =========================================================================
 // SISTEMA DE FORTIFICAÇÕES: MURALHAS DE PEDRA & PORTÕES FUNCIONAIS
 // =========================================================================
@@ -6927,6 +7223,94 @@ function createGhostCollege(): THREE.Group {
   return g;
 }
 
+function createGhostMarket(): THREE.Group {
+  const g = new THREE.Group();
+
+  // Plano base 3x3
+  const planeGeo = new THREE.PlaneGeometry(2.94, 2.94);
+  const planeMesh = new THREE.Mesh(planeGeo, ghostMatValid);
+  planeMesh.rotation.x = -Math.PI / 2;
+  planeMesh.position.y = 0.015;
+  g.add(planeMesh);
+  ghostMeshes.push(planeMesh);
+
+  const planeEdges = new THREE.LineSegments(new THREE.EdgesGeometry(planeGeo), ghostEdgeMatValid);
+  planeEdges.rotation.x = -Math.PI / 2;
+  planeEdges.position.y = 0.016;
+  g.add(planeEdges);
+  ghostEdges.push(planeEdges);
+
+  // Saia de fundação
+  const skirtGeo = new THREE.BoxGeometry(2.7, 0.8, 2.7);
+  const skirtMesh = new THREE.Mesh(skirtGeo, ghostMatValid);
+  skirtMesh.position.y = -0.4;
+  g.add(skirtMesh);
+  ghostMeshes.push(skirtMesh);
+
+  const skirtEdges = new THREE.LineSegments(new THREE.EdgesGeometry(skirtGeo), ghostEdgeMatValid);
+  skirtEdges.position.y = -0.4;
+  g.add(skirtEdges);
+  ghostEdges.push(skirtEdges);
+
+  // Base plinto
+  const baseGeo = new THREE.BoxGeometry(2.65, 0.16, 2.65);
+  const baseMesh = new THREE.Mesh(baseGeo, ghostMatValid);
+  baseMesh.position.y = 0.08;
+  g.add(baseMesh);
+  ghostMeshes.push(baseMesh);
+
+  const baseEdges = new THREE.LineSegments(new THREE.EdgesGeometry(baseGeo), ghostEdgeMatValid);
+  baseEdges.position.y = 0.08;
+  g.add(baseEdges);
+  ghostEdges.push(baseEdges);
+
+  // Barraca 1 (Toldo)
+  const stall1Geo = new THREE.BoxGeometry(1.1, 0.12, 0.65);
+  const stall1 = new THREE.Mesh(stall1Geo, ghostMatValid);
+  stall1.rotation.x = -0.15;
+  stall1.position.set(-0.65, 1.3, -0.65);
+  g.add(stall1);
+  ghostMeshes.push(stall1);
+
+  const stall1Edges = new THREE.LineSegments(new THREE.EdgesGeometry(stall1Geo), ghostEdgeMatValid);
+  stall1Edges.rotation.x = -0.15;
+  stall1Edges.position.set(-0.65, 1.3, -0.65);
+  g.add(stall1Edges);
+  ghostEdges.push(stall1Edges);
+
+  // Barraca 2 (Toldo)
+  const stall2Geo = new THREE.BoxGeometry(1.1, 0.12, 0.65);
+  const stall2 = new THREE.Mesh(stall2Geo, ghostMatValid);
+  stall2.rotation.x = -0.15;
+  stall2.position.set(0.65, 1.3, -0.65);
+  g.add(stall2);
+  ghostMeshes.push(stall2);
+
+  const stall2Edges = new THREE.LineSegments(new THREE.EdgesGeometry(stall2Geo), ghostEdgeMatValid);
+  stall2Edges.rotation.x = -0.15;
+  stall2Edges.position.set(0.65, 1.3, -0.65);
+  g.add(stall2Edges);
+  ghostEdges.push(stall2Edges);
+
+  // Barraca Central (Tenda piramidal)
+  const stall3Geo = new THREE.ConeGeometry(0.85, 0.5, 4);
+  const stall3 = new THREE.Mesh(stall3Geo, ghostMatValid);
+  stall3.rotation.y = Math.PI / 4;
+  stall3.position.set(0, 1.45, 0.5);
+  g.add(stall3);
+  ghostMeshes.push(stall3);
+
+  const stall3Edges = new THREE.LineSegments(new THREE.EdgesGeometry(stall3Geo), ghostEdgeMatValid);
+  stall3Edges.rotation.y = Math.PI / 4;
+  stall3Edges.position.set(0, 1.45, 0.5);
+  g.add(stall3Edges);
+  ghostEdges.push(stall3Edges);
+
+  g.visible = false;
+  scene.add(g);
+  return g;
+}
+
 // --- 10. GHOST BUILDING (MODELO HOLOGRÁFICO 2x2) ---
 const ghostMatValid = new THREE.MeshBasicMaterial({
   color: 0x22c55e,
@@ -6943,7 +7327,7 @@ const ghostMatInvalid = new THREE.MeshBasicMaterial({
 const ghostEdgeMatValid = new THREE.LineBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.9 });
 const ghostEdgeMatInvalid = new THREE.LineBasicMaterial({ color: 0xf87171, transparent: true, opacity: 0.9 });
 
-type PlacementBuildingType = 'BARRACKS' | 'TOWER' | 'LUMBER_CAMP' | 'MINING_CAMP' | 'HOUSE' | 'MILL' | 'FARM' | 'SCHOOL' | 'COLLEGE' | 'WALL' | 'GATE' | 'ARCHERY_RANGE';
+type PlacementBuildingType = 'BARRACKS' | 'TOWER' | 'LUMBER_CAMP' | 'MINING_CAMP' | 'HOUSE' | 'MILL' | 'FARM' | 'SCHOOL' | 'COLLEGE' | 'MARKET' | 'WALL' | 'GATE' | 'ARCHERY_RANGE';
 let currentPlacementType: PlacementBuildingType = 'BARRACKS';
 
 let ghostGroup: THREE.Group;
@@ -6955,6 +7339,7 @@ let ghostMillGroup: THREE.Group;
 let ghostFarmGroup: THREE.Group;
 let ghostSchoolGroup: THREE.Group;
 let ghostCollegeGroup: THREE.Group;
+let ghostMarketGroup: THREE.Group;
 let ghostWallGroup: THREE.Group;
 let ghostGateGroup: THREE.Group;
 let ghostArcheryGroup: THREE.Group;
@@ -7597,6 +7982,7 @@ ghostMillGroup = createGhostMill();
 ghostFarmGroup = createGhostFarm();
 ghostSchoolGroup = createGhostSchool();
 ghostCollegeGroup = createGhostCollege();
+ghostMarketGroup = createGhostMarket();
 ghostWallGroup = createGhostWall();
 ghostGateGroup = createGhostGate();
 ghostArcheryGroup = createGhostArcheryRange();
@@ -7610,6 +7996,7 @@ export function getBuildingDimensions(type: string): { width: number; height: nu
   switch (type) {
     case 'TOWN_CENTER':
     case 'COLLEGE':
+    case 'MARKET':
       return { width: 3, height: 3 };
     case 'BARRACKS':
     case 'ARCHERY_RANGE':
@@ -8055,6 +8442,7 @@ export function canAffordBuilding(type: PlacementBuildingType): boolean {
   if (type === 'FARM') return resources.wood >= FARM_COST_WOOD;
   if (type === 'SCHOOL') return resources.wood >= SCHOOL_COST_WOOD && resources.stone >= SCHOOL_COST_STONE;
   if (type === 'COLLEGE') return resources.wood >= COLLEGE_COST_WOOD && resources.stone >= COLLEGE_COST_STONE && resources.gold >= COLLEGE_COST_GOLD;
+  if (type === 'MARKET') return resources.wood >= MARKET_COST_WOOD && resources.stone >= MARKET_COST_STONE;
   if (type === 'ARCHERY_RANGE') return resources.wood >= ARCHERY_RANGE_COST_WOOD && resources.stone >= ARCHERY_RANGE_COST_STONE;
   return false;
 }
@@ -8111,9 +8499,33 @@ const btnBuildMill = document.getElementById('btn-build-mill');
 const btnBuildFarm = document.getElementById('btn-build-farm');
 const btnBuildSchool = document.getElementById('btn-build-school');
 const btnBuildCollege = document.getElementById('btn-build-college');
+const btnBuildMarket = document.getElementById('btn-build-market');
 const btnBuildWall = document.getElementById('btn-build-wall');
 const btnBuildGate = document.getElementById('btn-build-gate');
 const btnBuildArchery = document.getElementById('btn-build-archery');
+
+// Painel do Mercado Feudal (#market-hud-panel)
+const marketHudPanelEl = document.getElementById('market-hud-panel');
+const btnCloseMarket = document.getElementById('btn-close-market');
+const marketCurrentGoldEl = document.getElementById('market-current-gold');
+const marketStockWoodEl = document.getElementById('market-stock-wood');
+const marketStockFoodEl = document.getElementById('market-stock-food');
+const marketStockStoneEl = document.getElementById('market-stock-stone');
+const marketSellPriceWoodEl = document.getElementById('market-sell-price-wood');
+const marketBuyPriceWoodEl = document.getElementById('market-buy-price-wood');
+const marketTrendWoodEl = document.getElementById('market-trend-wood');
+const marketSellPriceFoodEl = document.getElementById('market-sell-price-food');
+const marketBuyPriceFoodEl = document.getElementById('market-buy-price-food');
+const marketTrendFoodEl = document.getElementById('market-trend-food');
+const marketSellPriceStoneEl = document.getElementById('market-sell-price-stone');
+const marketBuyPriceStoneEl = document.getElementById('market-buy-price-stone');
+const marketTrendStoneEl = document.getElementById('market-trend-stone');
+const btnMarketSellWood = document.getElementById('btn-market-sell-wood') as HTMLButtonElement | null;
+const btnMarketBuyWood = document.getElementById('btn-market-buy-wood') as HTMLButtonElement | null;
+const btnMarketSellFood = document.getElementById('btn-market-sell-food') as HTMLButtonElement | null;
+const btnMarketBuyFood = document.getElementById('btn-market-buy-food') as HTMLButtonElement | null;
+const btnMarketSellStone = document.getElementById('btn-market-sell-stone') as HTMLButtonElement | null;
+const btnMarketBuyStone = document.getElementById('btn-market-buy-stone') as HTMLButtonElement | null;
 
 const archeryPanelEl = document.getElementById('archery-panel');
 const btnCloseArchery = document.getElementById('btn-close-archery');
@@ -8281,6 +8693,11 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
       console.log(`[RTS Construção] Recursos insuficientes para Faculdade (${resources.wood}/${COLLEGE_COST_WOOD} 🪵, ${resources.stone}/${COLLEGE_COST_STONE} 🪨, ${resources.gold}/${COLLEGE_COST_GOLD} 🪙).`);
       return;
     }
+  } else if (type === 'MARKET') {
+    if (resources.wood < MARKET_COST_WOOD || resources.stone < MARKET_COST_STONE) {
+      console.log(`[RTS Construção] Recursos insuficientes para Mercado (${resources.wood}/${MARKET_COST_WOOD} 🪵, ${resources.stone}/${MARKET_COST_STONE} 🪨).`);
+      return;
+    }
   } else if (type === 'ARCHERY_RANGE') {
     if (resources.wood < ARCHERY_RANGE_COST_WOOD || resources.stone < ARCHERY_RANGE_COST_STONE) {
       console.log(`[RTS Construção] Recursos insuficientes para Campo de Tiro com Arco (${resources.wood}/${ARCHERY_RANGE_COST_WOOD} 🪵, ${resources.stone}/${ARCHERY_RANGE_COST_STONE} 🪨).`);
@@ -8301,6 +8718,7 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
   ghostFarmGroup.visible = false;
   ghostSchoolGroup.visible = false;
   ghostCollegeGroup.visible = false;
+  ghostMarketGroup.visible = false;
   ghostWallGroup.visible = false;
   ghostGateGroup.visible = false;
   ghostArcheryGroup.visible = false;
@@ -8314,6 +8732,7 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
   btnBuildFarm?.classList.remove('active');
   btnBuildSchool?.classList.remove('active');
   btnBuildCollege?.classList.remove('active');
+  btnBuildMarket?.classList.remove('active');
   btnBuildWall?.classList.remove('active');
   btnBuildGate?.classList.remove('active');
   btnBuildArchery?.classList.remove('active');
@@ -8359,6 +8778,10 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
     ghostCollegeGroup.visible = true;
     btnBuildCollege?.classList.add('active');
     if (bannerText) bannerText.textContent = 'Modo Construção: Real Faculdade [3x3] (150 🪵 + 120 🪨 + 80 🪙)';
+  } else if (type === 'MARKET') {
+    ghostMarketGroup.visible = true;
+    btnBuildMarket?.classList.add('active');
+    if (bannerText) bannerText.textContent = 'Modo Construção: Mercado Feudal [3x3] (150 🪵 + 50 🪨)';
   } else if (type === 'ARCHERY_RANGE') {
     ghostArcheryGroup.visible = true;
     btnBuildArchery?.classList.add('active');
@@ -8382,6 +8805,7 @@ function enterPlacementMode(type: PlacementBuildingType = 'BARRACKS') {
     type === 'FARM' ? 'Fazenda [2x2]' :
     type === 'SCHOOL' ? 'Escola da Vila [2x2]' :
     type === 'COLLEGE' ? 'Real Faculdade [3x3]' :
+    type === 'MARKET' ? 'Mercado Feudal [3x3]' :
     type === 'ARCHERY_RANGE' ? 'Campo de Tiro com Arco [2x2]' :
     'Quartel [2x2]';
   console.log(`[RTS Construção] Modo de posicionamento ativo: ${nameLabel}. [LMB] Posicionar • [RMB/Esc] Cancelar`);
@@ -8399,6 +8823,7 @@ function exitPlacementMode() {
   ghostFarmGroup.visible = false;
   ghostSchoolGroup.visible = false;
   ghostCollegeGroup.visible = false;
+  ghostMarketGroup.visible = false;
   ghostWallGroup.visible = false;
   ghostGateGroup.visible = false;
   ghostArcheryGroup.visible = false;
@@ -8411,6 +8836,7 @@ function exitPlacementMode() {
   btnBuildFarm?.classList.remove('active');
   btnBuildSchool?.classList.remove('active');
   btnBuildCollege?.classList.remove('active');
+  btnBuildMarket?.classList.remove('active');
   btnBuildWall?.classList.remove('active');
   btnBuildGate?.classList.remove('active');
   btnBuildArchery?.classList.remove('active');
@@ -8762,6 +9188,37 @@ function placeCollege(gx: number, gz: number, shiftKey: boolean = false) {
   }
 
   finalizeBuildingPlacement('COLLEGE', shiftKey);
+}
+
+function placeMarket(gx: number, gz: number, shiftKey: boolean = false) {
+  if (!isValidBuildingPlacement(gx, gz, 'MARKET')) {
+    soundManager.popCappedAlert();
+    spawnFloatingText(new THREE.Vector3(gx + 1.5, 2.0, gz + 1.5), '⚠️ Terreno ocupado ou obstruído!', '#ef4444');
+    return;
+  }
+
+  if (resources.wood < MARKET_COST_WOOD || resources.stone < MARKET_COST_STONE) {
+    console.log(`[RTS Construção] Recursos insuficientes para Mercado (${resources.wood}/${MARKET_COST_WOOD} 🪵, ${resources.stone}/${MARKET_COST_STONE} 🪨)!`);
+    exitPlacementMode();
+    return;
+  }
+
+  // Subtrai 150 madeira e 50 pedra
+  resources.wood -= MARKET_COST_WOOD;
+  resources.stone -= MARKET_COST_STONE;
+  updateResourceHUD(true);
+  spawnFloatingText(new THREE.Vector3(gx + 1.5, 1.6, gz + 1.5), `-${MARKET_COST_WOOD} 🪵 -${MARKET_COST_STONE} 🪨`);
+
+  const building = createMarketFoundation(gx, gz);
+  console.log(`[RTS Construção] Canteiro do Mercado Feudal posicionado em (${gx}, ${gz}). Progresso: 0%`);
+
+  const selected = getSelectedUnits().filter((u) => u.unitType === 'VILLAGER');
+  if (selected.length > 0) {
+    console.log(`[RTS Construção] ${selected.length} aldeão(ões) enviados para construir o Mercado.`);
+    selected.forEach((u) => commandBuild(u, building));
+  }
+
+  finalizeBuildingPlacement('MARKET', shiftKey);
 }
 
 function placeWall(gx: number, gz: number, shiftKey: boolean = false) {
@@ -9590,6 +10047,7 @@ function selectBuilding(building: ConstructionBuilding) {
   if (millHudPanelEl) millHudPanelEl.style.display = 'none';
   if (schoolPanelEl) schoolPanelEl.style.display = 'none';
   if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'none';
+  if (marketHudPanelEl) marketHudPanelEl.style.display = 'none';
   if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
 
   if (building.type === 'BARRACKS' && building.isCompleted) {
@@ -9609,6 +10067,9 @@ function selectBuilding(building: ConstructionBuilding) {
   } else if (building.type === 'COLLEGE' && building.isCompleted) {
     if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'flex';
     updateCollegeHUD();
+  } else if (building.type === 'MARKET' && building.isCompleted) {
+    if (marketHudPanelEl) marketHudPanelEl.style.display = 'flex';
+    updateMarketHUD();
   } else if (building.isCompleted) {
     if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'flex';
   }
@@ -9631,6 +10092,7 @@ function deselectBuilding() {
   if (millHudPanelEl) millHudPanelEl.style.display = 'none';
   if (schoolPanelEl) schoolPanelEl.style.display = 'none';
   if (collegeHudPanelEl) collegeHudPanelEl.style.display = 'none';
+  if (marketHudPanelEl) marketHudPanelEl.style.display = 'none';
   if (buildingHudPanelEl) buildingHudPanelEl.style.display = 'none';
   deselectTownCenter();
   updateRallyPointVisuals();
@@ -9895,6 +10357,114 @@ function destroySchool(school: ConstructionBuilding) {
   }
   if (selectedBuilding === school) {
     deselectBuilding();
+  }
+}
+
+// --- MÉTODOS DO MERCADO FEUDAL (MARKET) ---
+export function hasCompletedMarket(faction: UnitFaction = 'PLAYER'): boolean {
+  return buildingsList.some(
+    (b) => b.type === 'MARKET' && b.faction === faction && b.isCompleted && !b.isDepleted && (b.hp === undefined || b.hp > 0)
+  );
+}
+
+export function updateMarketHUD(): void {
+  if (!marketHudPanelEl) return;
+
+  const hasMarket = hasCompletedMarket('PLAYER');
+  if (marketCurrentGoldEl) {
+    marketCurrentGoldEl.textContent = `🪙 ${Math.floor(resources.gold)}`;
+  }
+
+  // Estoques atuais do jogador
+  if (marketStockWoodEl) marketStockWoodEl.textContent = `${Math.floor(resources.wood)} em estoque`;
+  if (marketStockFoodEl) marketStockFoodEl.textContent = `${Math.floor(resources.food)} em estoque`;
+  if (marketStockStoneEl) marketStockStoneEl.textContent = `${Math.floor(resources.stone)} em estoque`;
+
+  // Taxas e preços atuais
+  const woodPrice = playerMarketState.prices.WOOD ?? MARKET_CONFIG.BASE_PRICES.WOOD;
+  const foodPrice = playerMarketState.prices.FOOD ?? MARKET_CONFIG.BASE_PRICES.FOOD;
+  const stonePrice = playerMarketState.prices.STONE ?? MARKET_CONFIG.BASE_PRICES.STONE;
+
+  const woodRates = getTradeRates(woodPrice);
+  const foodRates = getTradeRates(foodPrice);
+  const stoneRates = getTradeRates(stonePrice);
+
+  if (marketSellPriceWoodEl) marketSellPriceWoodEl.textContent = `🪙 ${woodRates.sellRate}`;
+  if (marketBuyPriceWoodEl) marketBuyPriceWoodEl.textContent = `🪙 ${woodRates.buyRate}`;
+
+  if (marketSellPriceFoodEl) marketSellPriceFoodEl.textContent = `🪙 ${foodRates.sellRate}`;
+  if (marketBuyPriceFoodEl) marketBuyPriceFoodEl.textContent = `🪙 ${foodRates.buyRate}`;
+
+  if (marketSellPriceStoneEl) marketSellPriceStoneEl.textContent = `🪙 ${stoneRates.sellRate}`;
+  if (marketBuyPriceStoneEl) marketBuyPriceStoneEl.textContent = `🪙 ${stoneRates.buyRate}`;
+
+  // Indicadores de tendência (▲ acima da base / ▼ abaixo / ● na base)
+  function renderTrend(current: number, base: number, el: HTMLElement | null) {
+    if (!el) return;
+    const diff = current - base;
+    if (Math.abs(diff) < 0.5) {
+      el.textContent = '●';
+      el.className = 'trend-indicator trend-neutral';
+      el.title = 'Preço equilibrado na base';
+    } else if (diff > 0) {
+      el.textContent = '▲';
+      el.className = 'trend-indicator trend-up';
+      el.title = `Preço valorizado (+${Math.round((diff / base) * 100)}% da base)`;
+    } else {
+      el.textContent = '▼';
+      el.className = 'trend-indicator trend-down';
+      el.title = `Preço desvalorizado (${Math.round((diff / base) * 100)}% da base)`;
+    }
+  }
+
+  renderTrend(woodPrice, MARKET_CONFIG.BASE_PRICES.WOOD, marketTrendWoodEl);
+  renderTrend(foodPrice, MARKET_CONFIG.BASE_PRICES.FOOD, marketTrendFoodEl);
+  renderTrend(stonePrice, MARKET_CONFIG.BASE_PRICES.STONE, marketTrendStoneEl);
+
+  // Estados dos botões (100 unidades por padrão)
+  if (btnMarketSellWood) {
+    const canSell = hasMarket && resources.wood >= 100;
+    btnMarketSellWood.disabled = !canSell;
+    btnMarketSellWood.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.wood < 100 ? 'Madeira insuficiente (requer 100)' : 'Vender 100 Madeira por Ouro (Shift: 500)');
+  }
+  if (btnMarketBuyWood) {
+    const canBuy = hasMarket && resources.gold >= woodRates.buyRate;
+    btnMarketBuyWood.disabled = !canBuy;
+    btnMarketBuyWood.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.gold < woodRates.buyRate ? `Ouro insuficiente (requer ${woodRates.buyRate} 🪙)` : 'Comprar 100 Madeira com Ouro (Shift: 500)');
+  }
+
+  if (btnMarketSellFood) {
+    const canSell = hasMarket && resources.food >= 100;
+    btnMarketSellFood.disabled = !canSell;
+    btnMarketSellFood.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.food < 100 ? 'Comida insuficiente (requer 100)' : 'Vender 100 Comida por Ouro (Shift: 500)');
+  }
+  if (btnMarketBuyFood) {
+    const canBuy = hasMarket && resources.gold >= foodRates.buyRate;
+    btnMarketBuyFood.disabled = !canBuy;
+    btnMarketBuyFood.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.gold < foodRates.buyRate ? `Ouro insuficiente (requer ${foodRates.buyRate} 🪙)` : 'Comprar 100 Comida com Ouro (Shift: 500)');
+  }
+
+  if (btnMarketSellStone) {
+    const canSell = hasMarket && resources.stone >= 100;
+    btnMarketSellStone.disabled = !canSell;
+    btnMarketSellStone.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.stone < 100 ? 'Pedra insuficiente (requer 100)' : 'Vender 100 Pedra por Ouro (Shift: 500)');
+  }
+  if (btnMarketBuyStone) {
+    const canBuy = hasMarket && resources.gold >= stoneRates.buyRate;
+    btnMarketBuyStone.disabled = !canBuy;
+    btnMarketBuyStone.title = !hasMarket
+      ? 'Requer um Mercado construído'
+      : (resources.gold < stoneRates.buyRate ? `Ouro insuficiente (requer ${stoneRates.buyRate} 🪙)` : 'Comprar 100 Pedra com Ouro (Shift: 500)');
   }
 }
 
@@ -10844,6 +11414,48 @@ function updateBarracksHUD() {
   }
 }
 
+/** Executa uma negociação no Mercado Feudal com feedback audiovisual e atualização de HUD */
+export function handlePlayerTrade(resource: TradableResource, side: 'buy' | 'sell', lots: number = 1): void {
+  const hasMarket = hasCompletedMarket('PLAYER');
+  const result = executeTrade(resources, playerMarketState, hasMarket, resource, side, lots);
+
+  if (!result.ok) {
+    soundManager.popCappedAlert();
+    let msg = '⚠️ Transação não permitida!';
+    if (result.reason === 'NO_MARKET') msg = '⚠️ Você não possui um Mercado concluído!';
+    else if (result.reason === 'INSUFFICIENT_RESOURCES') {
+      const resName = resource === 'WOOD' ? 'Madeira' : (resource === 'FOOD' ? 'Comida' : 'Pedra');
+      msg = `⚠️ ${resName} insuficiente para vender ${lots * 100} un.!`;
+    } else if (result.reason === 'INSUFFICIENT_GOLD') {
+      msg = '⚠️ Ouro insuficiente no tesouro para esta compra!';
+    }
+    spawnFloatingText(new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z), msg, '#ef4444');
+    return;
+  }
+
+  soundManager.uiClick();
+  updateResourceHUD(true);
+  updateMarketHUD();
+
+  // Encontra posição do Mercado selecionado ou do primeiro mercado para spawnar feedback
+  const marketCenter = selectedBuilding && selectedBuilding.type === 'MARKET'
+    ? selectedBuilding.worldCenter.clone().setY(2.2)
+    : new THREE.Vector3(cameraTarget.x, 2.2, cameraTarget.z);
+
+  const resIcon = resource === 'WOOD' ? '🪵' : (resource === 'FOOD' ? '🍖' : '🪨');
+  if (side === 'sell') {
+    spawnFloatingText(marketCenter, `+${result.goldDelta} 🪙 (-${Math.abs(result.resourceDelta || 0)} ${resIcon})`, '#facc15');
+    console.log(`[RTS Mercado] Venda de ${Math.abs(result.resourceDelta || 0)} ${resource} rendeu +${result.goldDelta} 🪙.`);
+  } else {
+    spawnFloatingText(marketCenter, `+${result.resourceDelta} ${resIcon} (${result.goldDelta} 🪙)`, '#38bdf8');
+    console.log(`[RTS Mercado] Compra de +${result.resourceDelta} ${resource} custou ${Math.abs(result.goldDelta || 0)} 🪙.`);
+  }
+
+  if (selectedBuilding && selectedBuilding.type === 'MARKET') {
+    updateBuildingHpBar(selectedBuilding);
+  }
+}
+
 function trainArcher(building: ConstructionBuilding) {
   if (isGameOver) return;
   const currentPop = getCurrentPlayerPopulation();
@@ -11304,6 +11916,17 @@ function updateResourceHUD(bump = false) {
     } else {
       btnBuildCollege.classList.add('disabled');
       btnBuildCollege.title = `Construir Faculdade (Requer 150 Madeira, 120 Pedra, 80 Ouro • Você tem ${resources.wood} 🪵, ${resources.stone} 🪨, ${resources.gold} 🪙)`;
+    }
+  }
+
+  // Atualiza disponibilidade do botão de Construção (Mercado - 150 Madeira + 50 Pedra)
+  if (btnBuildMarket) {
+    if (resources.wood >= MARKET_COST_WOOD && resources.stone >= MARKET_COST_STONE) {
+      btnBuildMarket.classList.remove('disabled');
+      btnBuildMarket.title = 'Construir Mercado (Atalho K) — Requer 150 Madeira + 50 Pedra (Troca Comercial de Recursos)';
+    } else {
+      btnBuildMarket.classList.add('disabled');
+      btnBuildMarket.title = `Construir Mercado (Requer 150 Madeira, 50 Pedra • Você tem ${resources.wood} 🪵, ${resources.stone} 🪨)`;
     }
   }
 
@@ -13799,6 +14422,7 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
           building.type === 'FARM' ? 'Fazenda Concluída! 🌾 (175 Alimento)' :
           building.type === 'SCHOOL' ? 'Escola da Vila Concluída! 🏫' :
           building.type === 'COLLEGE' ? 'Real Faculdade Concluída! 🏛️' :
+          building.type === 'MARKET' ? 'Mercado Feudal Concluído! ⚖️' :
           'Quartel Concluído! ⚔️';
         const typeName =
           building.type === 'TOWER' ? 'Torre de Vigia' :
@@ -13811,6 +14435,7 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
           building.type === 'FARM' ? 'Fazenda' :
           building.type === 'SCHOOL' ? 'Escola da Vila' :
           building.type === 'COLLEGE' ? 'Real Faculdade' :
+          building.type === 'MARKET' ? 'Mercado Feudal' :
           'Quartel';
         if (isAllied || isBuildingDirectlyVisible(building)) {
           spawnFloatingText(building.worldCenter.clone().setY(2.2), label);
@@ -13837,6 +14462,9 @@ function updateUnitState(unit: RTSUnit, delta: number, now: number) {
         }
         if (building.type === 'COLLEGE' && selectedBuilding === building) {
           updateCollegeHUD();
+        }
+        if (building.type === 'MARKET' && selectedBuilding === building) {
+          updateMarketHUD();
         }
         if (building.faction === 'PLAYER' || (building.faction as string) === 'ALLIED' || !building.isEnemy) {
           updateTelemetryUnitsCount();
@@ -15429,6 +16057,16 @@ btnBuildCollege?.addEventListener('click', (e) => {
   }
 });
 
+btnBuildMarket?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  soundManager.uiClick();
+  if (isPlacementMode && currentPlacementType === 'MARKET') {
+    exitPlacementMode();
+  } else {
+    enterPlacementMode('MARKET');
+  }
+});
+
 btnBuildWall?.addEventListener('click', (e) => {
   e.stopPropagation();
   soundManager.uiClick();
@@ -15584,6 +16222,10 @@ function updateHoverMarker(clientX: number, clientY: number) {
         const gh = getBuildingPlacementHeight(ghostGridX, ghostGridZ, 3);
         ghostCollegeGroup.position.set(ghostGridX + 1.5, gh, ghostGridZ + 1.5);
         ghostCollegeGroup.visible = true;
+      } else if (currentPlacementType === 'MARKET') {
+        const gh = getBuildingPlacementHeight(ghostGridX, ghostGridZ, 3);
+        ghostMarketGroup.position.set(ghostGridX + 1.5, gh, ghostGridZ + 1.5);
+        ghostMarketGroup.visible = true;
       } else {
         const gh = getBuildingPlacementHeight(ghostGridX, ghostGridZ, 2);
         ghostGroup.position.set(ghostGridX + 1.0, gh, ghostGridZ + 1.0);
@@ -15637,6 +16279,7 @@ function updateHoverMarker(clientX: number, clientY: number) {
         building.type === 'FARM' ? (building.isDepleted ? 'Fazenda (Esgotada • Requer 60 🪵)' : `Fazenda (${Math.ceil(building.farmFood ?? 0)}/175 🍖)`) :
         building.type === 'SCHOOL' ? `Escola da Vila (Concluída • ${building.enrolledStudents?.length || 0}/3 Alunos)` :
         building.type === 'COLLEGE' ? `Real Faculdade (Concluída • ${building.enrolledStudents?.length || 0}/3 Especializandos)` :
+        building.type === 'MARKET' ? 'Mercado Feudal (Concluído • Troca de Recursos)' :
         'Quartel (Concluído)';
       setWalkableLabel(name, '#fbbf24');
     } else {
@@ -15651,6 +16294,7 @@ function updateHoverMarker(clientX: number, clientY: number) {
         building.type === 'FARM' ? 'Canteiro Fazenda' :
         building.type === 'SCHOOL' ? 'Canteiro Escola' :
         building.type === 'COLLEGE' ? 'Canteiro Faculdade' :
+        building.type === 'MARKET' ? 'Canteiro Mercado' :
         'Canteiro Quartel';
       setWalkableLabel(`${name} • ${Math.floor(building.progress)}%`, '#f59e0b');
     }
@@ -15980,6 +16624,15 @@ window.addEventListener('keydown', (e) => {
     }
   }
 
+  // Atalho K para construir Mercado Feudal (Market)
+  if (e.key.toLowerCase() === 'k') {
+    if (isPlacementMode && currentPlacementType === 'MARKET') {
+      exitPlacementMode();
+    } else {
+      enterPlacementMode('MARKET');
+    }
+  }
+
   // Atalho P para construir Muralha de Pedra (Stone Wall)
   if (e.key.toLowerCase() === 'p') {
     if (!hasLivingArchitect()) {
@@ -16154,6 +16807,46 @@ document.getElementById('btn-clear-college-rally')?.addEventListener('click', (e
     updateRallyPointVisuals();
     spawnFloatingText(selectedBuilding.worldCenter.clone().setY(2.2), '🚩 Ponto Restaurado para a Porta', '#94a3b8');
   }
+});
+
+// Botão Fechar Mercado
+btnCloseMarket?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  deselectBuilding();
+});
+
+// Botões de Negociação do Mercado (100 un por clique, 500 un com Shift)
+btnMarketSellWood?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('WOOD', 'sell', lots);
+});
+btnMarketBuyWood?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('WOOD', 'buy', lots);
+});
+
+btnMarketSellFood?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('FOOD', 'sell', lots);
+});
+btnMarketBuyFood?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('FOOD', 'buy', lots);
+});
+
+btnMarketSellStone?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('STONE', 'sell', lots);
+});
+btnMarketBuyStone?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const lots = e.shiftKey ? 5 : 1;
+  handlePlayerTrade('STONE', 'buy', lots);
 });
 
 // --- FULLSCREEN NATIVO & MOBILE HUD CONTROLS ---
@@ -16724,6 +17417,8 @@ window.addEventListener('pointerdown', (e) => {
         placeSchool(ghostGridX, ghostGridZ, e.shiftKey);
       } else if (currentPlacementType === 'COLLEGE') {
         placeCollege(ghostGridX, ghostGridZ, e.shiftKey);
+      } else if (currentPlacementType === 'MARKET') {
+        placeMarket(ghostGridX, ghostGridZ, e.shiftKey);
       } else if (currentPlacementType === 'ARCHERY_RANGE') {
         placeArcheryRange(ghostGridX, ghostGridZ, e.shiftKey);
       } else {
@@ -16949,6 +17644,7 @@ function handleQuickTap(clientX: number, clientY: number): void {
       else if (currentPlacementType === 'FARM') placeFarm(ghostGridX, ghostGridZ, false);
       else if (currentPlacementType === 'SCHOOL') placeSchool(ghostGridX, ghostGridZ, false);
       else if (currentPlacementType === 'COLLEGE') placeCollege(ghostGridX, ghostGridZ, false);
+      else if (currentPlacementType === 'MARKET') placeMarket(ghostGridX, ghostGridZ, false);
       else if (currentPlacementType === 'ARCHERY_RANGE') placeArcheryRange(ghostGridX, ghostGridZ, false);
       else placeBarracks(ghostGridX, ghostGridZ, false);
     }
@@ -20807,6 +21503,12 @@ function animate() {
     updateColleges(delta);
     updateGates(delta);
 
+    // Atualiza Cotações e Flutuação de Mercado Feudal (1% de recuperação por segundo)
+    tickMarketPrices(playerMarketState, delta);
+    if (selectedBuilding && selectedBuilding.type === 'MARKET' && marketHudPanelEl && marketHudPanelEl.style.display !== 'none') {
+      updateMarketHUD();
+    }
+
     // Cancelamento imediato de fortificações e torres caso o último arquiteto tenha morrido
     if (isPlacementMode && (currentPlacementType === 'WALL' || currentPlacementType === 'GATE' || currentPlacementType === 'TOWER') && !hasLivingArchitect()) {
       exitPlacementMode();
@@ -21595,6 +22297,7 @@ export type BuildingType =
   | 'FARM'
   | 'SCHOOL'
   | 'COLLEGE'
+  | 'MARKET'
   | 'WALL'
   | 'GATE'
   | 'ARCHERY_RANGE';
@@ -21668,6 +22371,7 @@ export interface FullSaveState {
   resources: ResourceNodeSaveData[];
   townCenterRallyPoint?: { x: number; z: number; targetType: string; targetId?: number | string };
   peacefulQuestsData?: { currentChapterIndex: number; completedObjectiveIds: string[] };
+  playerMarketPrices?: { WOOD: number; FOOD: number; STONE: number };
 }
 
 const QUICK_SAVE_KEY = 'rts_quicksave';
@@ -21930,7 +22634,12 @@ export function serializeGameState(saveName: string = 'Partida Salva'): FullSave
     peacefulQuestsData: currentMatchConfig.peacefulMode ? {
       currentChapterIndex,
       completedObjectiveIds: (peacefulChapters[currentChapterIndex]?.objectives ?? []).filter(o => o.isCompleted).map(o => o.id)
-    } : undefined
+    } : undefined,
+    playerMarketPrices: {
+      WOOD: playerMarketState.prices.WOOD,
+      FOOD: playerMarketState.prices.FOOD,
+      STONE: playerMarketState.prices.STONE
+    }
   };
 }
 
@@ -21968,6 +22677,9 @@ function createBuildingFromData(bData: BuildingSaveData): ConstructionBuilding |
       break;
     case 'COLLEGE':
       b = createCollegeFoundation(bData.gridX, bData.gridZ, faction);
+      break;
+    case 'MARKET':
+      b = createMarketFoundation(bData.gridX, bData.gridZ, faction);
       break;
     case 'WALL':
       b = createWallFoundation(bData.gridX, bData.gridZ, faction);
@@ -22548,6 +23260,16 @@ export function deserializeAndLoadGame(save: FullSaveState): void {
   if (save.popCap && typeof save.popCap.enemy === 'number') {
     enemyPopCap = save.popCap.enemy;
   }
+
+  // 10.5 Restaura preços e cotações dinâmicas do Mercado Feudal
+  if (save.playerMarketPrices) {
+    playerMarketState.prices.WOOD = save.playerMarketPrices.WOOD ?? MARKET_CONFIG.BASE_PRICES.WOOD;
+    playerMarketState.prices.FOOD = save.playerMarketPrices.FOOD ?? MARKET_CONFIG.BASE_PRICES.FOOD;
+    playerMarketState.prices.STONE = save.playerMarketPrices.STONE ?? MARKET_CONFIG.BASE_PRICES.STONE;
+  } else {
+    playerMarketState = createInitialMarketPriceState();
+  }
+  updateMarketHUD();
   updateResourceHUD(true);
 
   // 11. Restaura névoa de guerra e minimapa
