@@ -435,6 +435,7 @@ function fbmNoise2D(x: number, z: number, seed: number, octaves = 3, lacunarity 
 
 export let heightVertexGrid = new Float32Array((GRID_SIZE + 1) * (GRID_SIZE + 1));
 export const cliffCellsSet = new Set<number>();
+export const CLIFF_HEIGHT_DELTA = 1.0;
 
 export function getTerrainHeight(worldX: number, worldZ: number): number {
   if (!heightVertexGrid || heightVertexGrid.length === 0) return 0;
@@ -572,12 +573,13 @@ export const blockedGridTiles = new Set<string>();
 export function setWallCellOccupancy(gridX: number, gridZ: number, isBlocked: boolean): void {
   const x = Math.round(gridX);
   const z = Math.round(gridZ);
-  setCellWalkable(x, z, !isBlocked);
   const key = `${x},${z}`;
   if (isBlocked) {
     blockedGridTiles.add(key);
+    setCellWalkable(x, z, false);
   } else {
     blockedGridTiles.delete(key);
+    restoreCellWalkability(x, z);
   }
 }
 
@@ -600,7 +602,8 @@ function evaluateCliffsAndPlateaus(): void {
       for (const [nx, nz] of neighbors) {
         if (isCellInside(nx, nz)) {
           const nH = getCellHeight(nx, nz);
-          if (Math.abs(myH - nH) > 1.0) {
+          // Avaliação assimétrica: marca apenas o topo do penhasco (célula significativamente mais alta)
+          if (myH - nH > CLIFF_HEIGHT_DELTA) {
             isCliff = true;
             break;
           }
@@ -2483,11 +2486,20 @@ export function findPath(startGrid: THREE.Vector2, rawTargetGrid: THREE.Vector2,
   open.push({ x: startGrid.x, z: startGrid.y, g: 0, h: h0, f: h0, parent: null });
   gScore.set(cellKey(startGrid.x, startGrid.y), 0);
 
+  let lowestHNode: NodeAStar | null = null;
+  let lowestHDistance = Infinity;
+
   while (open.size > 0) {
     const current = open.pop()!;
     const ck = cellKey(current.x, current.z);
     if (closed.has(ck)) continue;
     closed.add(ck);
+
+    // Rastreia o nó fechado mais próximo da heurística até o objetivo
+    if (current.h < lowestHDistance) {
+      lowestHDistance = current.h;
+      lowestHNode = current;
+    }
 
     if (current.x === targetGrid.x && current.z === targetGrid.y) {
       const path: THREE.Vector2[] = [];
@@ -2508,8 +2520,8 @@ export function findPath(startGrid: THREE.Vector2, rawTargetGrid: THREE.Vector2,
 
       if (!isCellWalkableForPath(nx, nz, faction) || closed.has(nk)) continue;
 
-      // Desnível abrupto (> 1.0) entre células adjacentes impede passagem
-      if (Math.abs(getCellHeight(current.x, current.z) - getCellHeight(nx, nz)) > 1.0) continue;
+      // Desnível abrupto (> CLIFF_HEIGHT_DELTA) entre células adjacentes impede passagem
+      if (Math.abs(getCellHeight(current.x, current.z) - getCellHeight(nx, nz)) > CLIFF_HEIGHT_DELTA) continue;
 
       if (dir.dx !== 0 && dir.dz !== 0) {
         // Bloqueio de corte de quina (Corner-Cutting): se (current.x + dx, current.z) OU (current.x, current.z + dz)
@@ -2530,7 +2542,20 @@ export function findPath(startGrid: THREE.Vector2, rawTargetGrid: THREE.Vector2,
     }
   }
 
-  return [targetGrid.clone()];
+  // Fallback: Retorna caminho parcial até o nó que chegou mais perto do objetivo (excluindo nó inicial)
+  if (lowestHNode && lowestHNode.parent !== null) {
+    const path: THREE.Vector2[] = [];
+    let n: NodeAStar | null = lowestHNode;
+    while (n) {
+      path.push(new THREE.Vector2(n.x, n.z));
+      n = n.parent;
+    }
+    path.reverse();
+    if (path.length > 1) path.shift();
+    return path;
+  }
+
+  return [];
 }
 
 // --- 9. SISTEMA DE CONSTRUÇÃO DE EDIFÍCIOS (QUARTEL / BARRACKS 2x2) ---
@@ -2791,7 +2816,25 @@ export const tcTrainingQueue: TcProductionItem[] = [];
 export let tcTrainingTimer = 0;
 
 const buildingsList: ConstructionBuilding[] = [];
-const buildingsGridMap = new Map<number, ConstructionBuilding>();
+export const buildingsGridMap = new Map<number, ConstructionBuilding>();
+
+/**
+ * Restaura com segurança a transitabilidade de uma célula na destruição de edifícios ou remoção de recursos.
+ * Preserva o estado bloqueado caso a célula seja um penhasco, muralha ou possua outro edifício ativo.
+ */
+export function restoreCellWalkability(gx: number, gz: number): void {
+  if (!isCellInside(gx, gz)) return;
+  const ck = cellKey(gx, gz);
+  const strKey = `${gx},${gz}`;
+
+  // Não restaura se a célula for penhasco, muralha ou contiver outro edifício
+  if (cliffCellsSet.has(ck) || blockedGridTiles.has(strKey) || buildingsGridMap.has(ck)) {
+    setCellWalkable(gx, gz, false);
+    return;
+  }
+
+  setCellWalkable(gx, gz, true);
+}
 
 /**
  * Cria o modelo 3D do Quartel (Canteiro de Obras + Quartel Finalizado)
@@ -5341,10 +5384,10 @@ function depleteFarm(farm: ConstructionBuilding) {
     for (let dz = 0; dz < sZ; dz++) {
       const cx = farm.gridX + dx;
       const cz = farm.gridZ + dz;
-      setCellWalkable(cx, cz, true);
       if (buildingsGridMap.get(cellKey(cx, cz)) === farm) {
         buildingsGridMap.delete(cellKey(cx, cz));
       }
+      restoreCellWalkability(cx, cz);
     }
   }
 
@@ -7113,8 +7156,6 @@ function updateGates(delta: number): void {
     const isNowOpen = b.gateOpenProgress >= 0.5;
     const wasOpen = prevProgress >= 0.5;
     if (isNowOpen !== wasOpen) {
-      setCellWalkable(b.gridX, b.gridZ, isNowOpen);
-      setCellWalkable(b.gridX + 1, b.gridZ, isNowOpen);
       setWallCellOccupancy(b.gridX, b.gridZ, !isNowOpen);
       setWallCellOccupancy(b.gridX + 1, b.gridZ, !isNowOpen);
     }
@@ -7123,9 +7164,9 @@ function updateGates(delta: number): void {
 
 function destroyWall(wall: ConstructionBuilding): void {
   scene.remove(wall.group);
-  setCellWalkable(wall.gridX, wall.gridZ, true);
   setWallCellOccupancy(wall.gridX, wall.gridZ, false);
   buildingsGridMap.delete(cellKey(wall.gridX, wall.gridZ));
+  restoreCellWalkability(wall.gridX, wall.gridZ);
   const idx = buildingsList.indexOf(wall);
   if (idx !== -1) buildingsList.splice(idx, 1);
   spawnParticles(wall.worldCenter.clone().setY(0.6), 25, 0x78716c);
@@ -7137,12 +7178,12 @@ function destroyWall(wall: ConstructionBuilding): void {
 
 function destroyGate(gate: ConstructionBuilding): void {
   scene.remove(gate.group);
-  setCellWalkable(gate.gridX, gate.gridZ, true);
-  setCellWalkable(gate.gridX + 1, gate.gridZ, true);
   setWallCellOccupancy(gate.gridX, gate.gridZ, false);
   setWallCellOccupancy(gate.gridX + 1, gate.gridZ, false);
   buildingsGridMap.delete(cellKey(gate.gridX, gate.gridZ));
   buildingsGridMap.delete(cellKey(gate.gridX + 1, gate.gridZ));
+  restoreCellWalkability(gate.gridX, gate.gridZ);
+  restoreCellWalkability(gate.gridX + 1, gate.gridZ);
   const idx = buildingsList.indexOf(gate);
   if (idx !== -1) buildingsList.splice(idx, 1);
   spawnParticles(gate.worldCenter.clone().setY(0.8), 35, 0x78716c);
@@ -18319,10 +18360,10 @@ export function destroyEnemyTownCenter() {
     }
   });
 
-  // Libera as 9 células do grid para caminhada
+  // Libera as 9 células do grid para caminhada com segurança
   for (let dx = 0; dx < 3; dx++) {
     for (let dz = 0; dz < 3; dz++) {
-      setCellWalkable(enemyCampCoord.x + dx, enemyCampCoord.z + dz, true);
+      restoreCellWalkability(enemyCampCoord.x + dx, enemyCampCoord.z + dz);
     }
   }
 
@@ -18397,16 +18438,20 @@ export function destroyBuilding(building: ConstructionBuilding) {
   building.isDepleted = true;
   building.hp = 0;
 
+  const dims = getBuildingDimensions(building.type);
+  const sizeX = building.sizeX ?? dims.width ?? building.size;
+  const sizeZ = building.sizeZ ?? dims.height ?? building.size;
+
   // Libera as células do grid
-  for (let dx = 0; dx < building.size; dx++) {
-    for (let dz = 0; dz < building.size; dz++) {
+  for (let dx = 0; dx < sizeX; dx++) {
+    for (let dz = 0; dz < sizeZ; dz++) {
       const gx = building.gridX + dx;
       const gz = building.gridZ + dz;
-      setCellWalkable(gx, gz, true);
       if (building.type === 'WALL' || building.type === 'GATE') {
         setWallCellOccupancy(gx, gz, false);
       }
       buildingsGridMap.delete(cellKey(gx, gz));
+      restoreCellWalkability(gx, gz);
     }
   }
 
@@ -21630,8 +21675,8 @@ function animate() {
         tree.group.rotation.y += delta * 5;
         if (p >= 1) {
           scene.remove(tree.group);
-          setCellWalkable(tree.gridX, tree.gridZ, true);
           treesMap.delete(key);
+          restoreCellWalkability(tree.gridX, tree.gridZ);
         }
         return;
       }
@@ -21646,8 +21691,8 @@ function animate() {
         bush.group.scale.setScalar(bush.baseScale * (1 - p));
         if (p >= 1) {
           scene.remove(bush.group);
-          setCellWalkable(bush.gridX, bush.gridZ, true);
           berryBushesMap.delete(key);
+          restoreCellWalkability(bush.gridX, bush.gridZ);
         }
         return;
       }
@@ -21663,8 +21708,8 @@ function animate() {
         if (p >= 1) {
           spawnParticles(new THREE.Vector3(mine.gridX + 0.5, 0.25, mine.gridZ + 0.5), 14, 0x64748b);
           scene.remove(mine.group);
-          setCellWalkable(mine.gridX, mine.gridZ, true);
           stoneMinesMap.delete(key);
+          restoreCellWalkability(mine.gridX, mine.gridZ);
         }
         return;
       }
@@ -21682,8 +21727,8 @@ function animate() {
           spawnParticles(new THREE.Vector3(mine.gridX + 0.5, 0.25, mine.gridZ + 0.5), 18, 0xfacc15);
           spawnParticles(new THREE.Vector3(mine.gridX + 0.5, 0.25, mine.gridZ + 0.5), 8, 0x1e293b);
           scene.remove(mine.group);
-          setCellWalkable(mine.gridX, mine.gridZ, true);
           goldMinesMap.delete(key);
+          restoreCellWalkability(mine.gridX, mine.gridZ);
         }
         return;
       }
